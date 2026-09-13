@@ -1,0 +1,14 @@
+name: kpl_ext
+display_name: 开盘啦（情绪/板块强度）
+runtime: python
+entry: provider.KaiPanLaProvider
+description: "开盘啦 App 公开 HTTP 接口: 板块强度排行(RealRankingInfo, 免Token)、盘口/爆发原因/人气榜(Token)。数据为情绪短线核心源。"
+homepage: "https://apphis.longhuvip.com"
+api_key_env: ""
+check: availability
+datasets: [sector]
+inventory:
+  - dataset: sector
+    name: "板块强度排行"
+    desc: "开盘啦板块强度/涨跌幅/大单净额 排行 (概念+行业)"
+    upstream: "POST https://apphis.longhuvip.com/w1/api/index.php a=RealRankingInfo c=ZhiShuRanking"

@@ -830,6 +830,7 @@ export function EChartsCandlestick({
 
   // --- 全部用 ref，避免高频交互触发 React 重渲染 ---
   const infoIdxRef = useRef<number>(data.length - 1)
+  const hoverDateRef = useRef<string | null>(null)
   const compactRef = useRef(false)
   const userZoomRef = useRef<{ start: number; end: number } | null>(null)
 
@@ -977,6 +978,7 @@ export function EChartsCandlestick({
         if (idx >= 0 && idx < d.length) {
           if (infoIdxRef.current === idx) return
           infoIdxRef.current = idx
+          hoverDateRef.current = d[idx]?.date ?? hoverDateRef.current
 
           // 直接更新信息栏 DOM (通过 ref 读取最新的生成函数)
           const infoEl = infoBarRef.current
@@ -993,18 +995,39 @@ export function EChartsCandlestick({
       // 没有找到有效数据 — 不做任何操作，保持上次显示
     })
 
-    chart.on('click', (params: any) => {
-      if (params.componentType === 'markPoint' && params.name) {
-        onDateClickRef.current?.(params.name)
-        return
-      }
-      if (params.seriesName !== 'K' || params.dataIndex == null) return
+    // 点击绘图区任意位置(出现十字虚线的范围)即按横轴就近取交易日切换分时,
+    // 不再要求点中 K 线柱本体 (空隙/影线外/指标子图区域同样可点)。
+    const handleZrClick = (event: any) => {
+      // 点击任意格区 → 切到十字虚线所在交易日。
+      // 悬停处理器(updateAxisPointer)已可靠给出所在日期(信息条跟随),
+      // 直接采用; 无悬停记录时退回像素→类目索引转换链。
       const d = dataRef.current
-      const idx = params.dataIndex
+      if (!d.length) return
+      let idx = hoverDateRef.current ? d.findIndex((item) => item.date === hoverDateRef.current) : -1
+      if (idx < 0) {
+        const pixel: [number, number] = [event.offsetX, event.offsetY]
+        if (!chart.containPixel('grid', pixel)) return
+        const xFrom = (finder: any): number => {
+          try {
+            const c = chart.convertFromPixel(finder, pixel)
+            const v = Array.isArray(c) ? c[0] : c
+            return typeof v === 'number' && Number.isFinite(v) ? v : NaN
+          } catch {
+            return NaN
+          }
+        }
+        let x = xFrom({ seriesIndex: 0 })
+        if (!Number.isFinite(x)) x = xFrom({ xAxisIndex: 0 })
+        if (!Number.isFinite(x)) x = xFrom({ gridIndex: 0 })
+        idx = Number.isFinite(x)
+          ? Math.min(Math.max(Math.round(x), 0), d.length - 1)
+          : -1
+      }
       if (idx >= 0 && idx < d.length) {
         onDateClickRef.current?.(d[idx].date)
       }
-    })
+    }
+    chart.getZr().on('click', handleZrClick)
 
     const handlePriceDoubleClick = (event: { offsetX: number; offsetY: number }) => {
       const pixel: [number, number] = [event.offsetX, event.offsetY]
@@ -1041,7 +1064,7 @@ export function EChartsCandlestick({
 
     return () => {
       chart.off('updateAxisPointer')
-      chart.off('click')
+      chart.getZr().off('click', handleZrClick)
       chart.off('dataZoom')
       chart.getZr().off('dblclick', handlePriceDoubleClick)
       ro.disconnect()

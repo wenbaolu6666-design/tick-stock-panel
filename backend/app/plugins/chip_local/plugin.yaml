@@ -1,0 +1,14 @@
+# TSP built-in local chip plugin — 筹码分布本地推演 (无任何外部上游)。
+# 算法: 三角分布播种 + 换手衰减递推 (与 akshare stock_cyq_em 同源); 输入为 TSP 落盘 enriched 日K。
+name: chip_local
+display_name: "筹码分布（本地推演）"
+runtime: none
+entry: app.plugins.chip_local.provider:ChipLocalProvider
+check: app.plugins.chip_local.provider:availability
+datasets: [chip]
+description: "筹码分布本地推演：获利比例/平均成本/90与70成本区间及集中度/筹码峰。纯本地计算（不依赖任何外部源、不受封 IP 影响）；东财无公开 CYQ 接口，算法与 akshare stock_cyq_em 同源。"
+inventory:
+  - dataset: chip
+    name: "筹码分布（本地推演）"
+    desc: "获利比例/平均成本/90 与 70 成本区间及集中度/筹码峰；输入为本机 enriched 日K，零网络请求"
+    upstream: "本地推演（TSP 落盘日K enriched；东财无公开 CYQ 接口，tushare cyq 需积分未采用）"

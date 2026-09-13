@@ -1,0 +1,14 @@
+# TSP built-in news source via EastMoney public search API.
+name: eastmoney_news
+display_name: "东财新闻"
+runtime: none
+entry: app.plugins.eastmoney_news.provider:EastmoneyNewsProvider
+check: app.plugins.eastmoney_news.provider:availability
+datasets: [news]
+description: "东方财富个股新闻搜索（search-api-web），无需API Key。"
+homepage: "https://so.eastmoney.com/"
+inventory:
+  - dataset: news
+    name: "个股新闻搜索"
+    desc: "按代码搜索个股相关新闻：标题/摘要/时间/媒体名/URL（JSONP 剥壳）"
+    upstream: "东财 search-api-web.eastmoney.com/search/jsonp (type=cmsArticleWebOld)"

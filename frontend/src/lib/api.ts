@@ -1466,6 +1466,13 @@ export interface DataSourceItem {
 }
 
 /** 内置可选插件数据源 (plugins/ 目录, 需手动装依赖) */
+export interface PluginInventoryItem {
+  dataset: string         // 所属能力 (数据集键)
+  name: string            // 数据项名称
+  desc?: string           // 提供的内容
+  upstream?: string       // 上游来源 (真实端点/站点)
+}
+
 export interface PluginDataSourceItem {
   name: string
   display_name: string
@@ -1478,6 +1485,8 @@ export interface PluginDataSourceItem {
   homepage?: string        // 插件官网/申请地址 (manifest 可选声明)
   api_key_env?: string     // 声明后设置页提供 Key 输入框 (先探后存)
   api_key_masked?: string  // 当前生效 Key 的脱敏串 (secrets.json 优先, .env 兜底; 与 TickFlow Key 同一展示契约)
+  inventory?: PluginInventoryItem[]  // 数据溯源清单 (manifest inventory, 每项标注上游出处)
+  enabled?: boolean        // 用户是否启用 (停用后从能力路由候选移除)
 }
 
 /** 数据源路由偏好字段 (每个能力一个, 与后端能力注册表一一对应) */
@@ -1489,6 +1498,31 @@ export type ProviderField =
   | 'depth5_data_provider'
   | 'realtime_data_provider'
   | 'financial_data_provider'
+  | 'news_data_provider'
+  | 'dragon_tiger_data_provider'
+  | 'limit_updown_data_provider'
+  | 'market_overview_data_provider'
+  | 'consensus_data_provider'
+  | 'sector_data_provider'
+  | 'hot_list_data_provider'
+  | 'anomaly_data_provider'
+  | 'auction_data_provider'
+  | 'money_flow_data_provider'
+  | 'margin_data_provider'
+  | 'block_trade_data_provider'
+  | 'chip_data_provider'
+  | 'corp_events_data_provider'
+  | 'research_data_provider'
+  | 'announcements_data_provider'
+  | 'macro_data_provider'
+  | 'options_data_provider'
+  | 'valuation_data_provider'
+  | 'kzz_data_provider'
+  | 'ipo_data_provider'
+  | 'survey_data_provider'
+  | 'pledge_data_provider'
+  | 'score_data_provider'
+  | 'fund_data_provider'
 
 /** 能力路由矩阵中的一个候选源 (candidates 只含当前确实可提供该能力的源) */
 export interface CapabilityCandidate {
@@ -1612,6 +1646,31 @@ export interface Preferences {
   depth5_data_provider?: string
   realtime_data_provider?: string
   financial_data_provider?: string
+  news_data_provider?: string
+  dragon_tiger_data_provider?: string
+  limit_updown_data_provider?: string
+  market_overview_data_provider?: string
+  consensus_data_provider?: string
+  sector_data_provider?: string
+  hot_list_data_provider?: string
+  anomaly_data_provider?: string
+  auction_data_provider?: string
+  money_flow_data_provider?: string
+  margin_data_provider?: string
+  block_trade_data_provider?: string
+  chip_data_provider?: string
+  corp_events_data_provider?: string
+  research_data_provider?: string
+  announcements_data_provider?: string
+  macro_data_provider?: string
+  options_data_provider?: string
+  valuation_data_provider?: string
+  kzz_data_provider?: string
+  ipo_data_provider?: string
+  survey_data_provider?: string
+  pledge_data_provider?: string
+  score_data_provider?: string
+  fund_data_provider?: string
   data_source_job_timeout_s: number
   data_source_long_job_timeout_s: number
   minute_batch_compress: boolean
@@ -1740,6 +1799,11 @@ export const api = {
   deleteDataSource: (name: string) =>
     request<DataSourcesResponse>(`/api/settings/data-sources/${encodeURIComponent(name)}`, { method: 'DELETE' }),
   reloadDataSources: () => request<DataSourcesResponse>('/api/settings/data-sources/reload', { method: 'POST' }),
+  togglePlugin: (plugin: string, enabled: boolean) =>
+    request<{ plugin: string; enabled: boolean }>('/api/settings/plugin-toggle', {
+      method: 'POST',
+      body: JSON.stringify({ plugin, enabled }),
+    }),
   installPlugin: (name: string) => {
     // npm install 可能耗时较长, 用 6 分钟超时
     const controller = new AbortController()
@@ -2004,6 +2068,14 @@ export const api = {
     request<{ ok: boolean; count: number; msg: string }>('/api/settings/preferences/limit-ladder-monitor/run', {
       method: 'POST',
     }),
+  dashboardNorthbound: () =>
+    request<{ ok: boolean; rows: { time: string; hgt: number | null; sgt: number | null }[]; latest?: { time: string; hgt: number | null; sgt: number | null; total: number }; error?: string }>(
+      '/api/dashboard/northbound',
+    ),
+  dashboardLhb: (limit = 10) =>
+    request<{ ok: boolean; date: string; rows: { symbol: string; name: string; reason: string; net_buy: number | null; change_pct: number | null }[]; error?: string }>(
+      `/api/dashboard/lhb?limit=${limit}`,
+    ),
   updateDepthFinalizeTime: (hour: number, minute: number) =>
     request<{ hour: number; minute: number }>('/api/settings/preferences/depth-finalize-time', {
       method: 'PUT',

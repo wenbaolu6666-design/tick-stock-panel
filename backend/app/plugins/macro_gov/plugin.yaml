@@ -1,0 +1,19 @@
+# TSP built-in government macro plugin — 按上游拆分自 astock_ext。
+# 上游: www.stats.gov.cn (国家统计局) / www.pbc.gov.cn (人民银行)。
+name: macro_gov
+display_name: "官方宏观（统计局/央行）"
+runtime: none
+entry: app.plugins.macro_gov.provider:MacroGovProvider
+check: app.plugins.macro_gov.provider:availability
+datasets: [macro]
+description: "官方宏观发布数据：国家统计局 PMI（制造业/非制造业商务活动指数）、人民银行社会融资规模增量（xlsx 解析）。官方页面爬取，改版即失效（脆弱源），无需 Key。"
+homepage: "https://www.stats.gov.cn/sj/zxfb/"
+inventory:
+  - dataset: macro
+    name: "PMI 制造业/非制造业"
+    desc: "最新月制造业 PMI 与非制造业商务活动指数（发布渠道页面抓取，脆弱）"
+    upstream: "国家统计局 www.stats.gov.cn/sj/zxfb"
+  - dataset: macro
+    name: "社会融资规模增量"
+    desc: "央行金融统计数据报告 xlsx 下载解析（前 60 行，脆弱）"
+    upstream: "人民银行 www.pbc.gov.cn/diaochatongjisi"

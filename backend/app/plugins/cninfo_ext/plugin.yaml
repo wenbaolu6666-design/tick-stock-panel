@@ -1,0 +1,23 @@
+# TSP built-in CNINFO (巨潮资讯/深交所) plugin — 按上游拆分自 astock_ext。
+# 上游: www.cninfo.com.cn (公告) / irm.cninfo.com.cn (互动易)。
+name: cninfo_ext
+display_name: "巨潮资讯（公告/互动/评级）"
+runtime: none
+entry: app.plugins.cninfo_ext.provider:CninfoExtProvider
+check: app.plugins.cninfo_ext.provider:availability
+datasets: [announcements, research]
+description: "巨潮资讯/深交所系数据：巨潮公告全文列表(标题/日期/PDF链接)、互动易投资者问答、券商评级/目标价(webapi AES 签名)。全部公开接口无需 Key。"
+homepage: "http://www.cninfo.com.cn/"
+inventory:
+  - dataset: announcements
+    name: "巨潮公告"
+    desc: "个股公告列表：标题/公告日期/全文 PDF 链接（深沪京三所）"
+    upstream: "巨潮资讯 www.cninfo.com.cn/new/hisAnnouncement/query"
+  - dataset: announcements
+    name: "互动易问答"
+    desc: "深交所互动易：投资者提问与上市公司回复（待修: 需调 keyWord 参数）"
+    upstream: "深交所互动易 irm.cninfo.com.cn/newircs/company/question"
+  - dataset: research
+    name: "券商评级/目标价"
+    desc: "当日全市场评级记录：机构/评级/目标价（字段透传 raw 列）"
+    upstream: "巨潮 webapi.cninfo.com.cn/api/sysapi/p_sysapi1089 (Accept-Enckey = base64(AES-128-CBC(unix秒)))"

@@ -133,6 +133,13 @@ if [ ! -d "$BACKEND_DIR/.venv" ] || [ "${#BACKEND_EXTRA_ARGS[@]}" -gt 0 ]; then
   ok "后端依赖装好了"
 fi
 
+# Optional plugin deps (e.g. mootdx) - re-add what uv sync --frozen removed
+for req in "$BACKEND_DIR"/app/plugins/*/requirements.txt; do
+  [ -f "$req" ] || continue
+  info "installing plugin deps: $(basename "$(dirname "$req")")"
+  uv pip install --python "$BACKEND_DIR/.venv/bin/python" -r "$req" || exit 1
+done
+
 if [ ! -d "$FRONTEND_DIR/node_modules" ]; then
   info "前端首次启动 — 安装 Node 依赖..."
   ( cd "$FRONTEND_DIR" && pnpm install )

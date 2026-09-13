@@ -1,0 +1,15 @@
+# TSP built-in Jin10 flash plugin — 金十数据 7×24 快讯。
+# 上游: www.jin10.com/flash_newest.js (var newest = [...], 零鉴权)。
+name: jin10_ext
+display_name: "金十快讯"
+runtime: none
+entry: app.plugins.jin10_ext.provider:Jin10ExtProvider
+check: app.plugins.jin10_ext.provider:availability
+datasets: [news]
+description: "金十数据 7×24 快讯（市场级：内容/时间/重要度标记），与财联社/东财/新浪滚播平权的新闻候选源。零 Key。"
+homepage: "https://www.jin10.com/"
+inventory:
+  - dataset: news
+    name: "7×24 快讯"
+    desc: "快讯内容/发布时间/重要度标记（市场级，偏宏观与全球）"
+    upstream: "金十 www.jin10.com/flash_newest.js"

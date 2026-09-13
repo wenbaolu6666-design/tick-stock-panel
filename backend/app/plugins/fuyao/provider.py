@@ -47,7 +47,7 @@ from app.plugins.fuyao.client import FuyaoClient, FuyaoError
 logger = logging.getLogger(__name__)
 
 # 只声明真实提供的数据集; 其余数据集 provider_has_dataset 返回 False → 回退 tickflow
-_DATASETS = ("realtime", "daily", "adj_factor", "financial")
+_DATASETS = ("realtime", "daily", "adj_factor", "financial", "valuation", "fund", "sector")
 
 API_KEY_ENV = "FUYAO_API_KEY"
 SECRETS_FIELD = "fuyao_api_key"  # UI 配置的 Key 存 secrets.json, 优先级高于 .env
@@ -1093,3 +1093,92 @@ class FuyaoProvider:
             "columns": list(head[0].keys()) if head else [],
             "preview": head,
         }
+
+    # ==================== valuation / fund (按上游扩容) ====================
+
+    def get_valuation(self, symbols: list[str]) -> list[dict]:
+        """估值快照（GET /api/a-share/valuations/snapshot）：pe_ttm/pe_mrq/pb_mrq/ps_ttm/pcf_ttm，批量≤100。"""
+        if not symbols:
+            return []
+        try:
+            data = self._get_client()._get(
+                "/api/a-share/valuations/snapshot", {"thscodes": ",".join(symbols[:100])},
+            )
+        except FuyaoError as e:
+            logger.warning("扶摇估值快照拉取失败: %s", e)
+            return []
+        rows = []
+        for item in (data.get("item") or []):
+            if not isinstance(item, dict):
+                continue
+            rows.append({
+                "symbol": item.get("thscode") or item.get("ticker"),
+                "name": item.get("name"),
+                "pe_ttm": _to_float(item.get("pe_ttm")),
+                "pe_mrq": _to_float(item.get("pe_mrq")),
+                "pb_mrq": _to_float(item.get("pb_mrq")),
+                "ps_ttm": _to_float(item.get("ps_ttm")),
+                "pcf_ttm": _to_float(item.get("pcf_ttm")),
+                "date": datetime.now().strftime("%Y-%m-%d"),
+            })
+        return rows
+
+    def get_fund(self, code: str) -> list[dict]:
+        """基金基本资料 + 最新净值（profile/detail + performance/nav）。code 为基金 thscode。"""
+        out: dict = {"fund_code": code}
+        try:
+            profile = self._get_client()._get("/api/fund/profile/detail", {"thscode": code})
+            item = profile.get("item")
+            if isinstance(item, dict):
+                out.update({
+                    "name": item.get("name"),
+                    "manager": item.get("manager"),
+                    "company": item.get("company") or item.get("fund_company"),
+                    "scale": _to_float(item.get("scale") or item.get("net_asset")),
+                    "setup_date": item.get("setup_date"),
+                })
+        except FuyaoError as e:
+            logger.warning("扶摇基金资料 %s 失败: %s", code, e)
+        try:
+            nav = self._get_client()._get(
+                "/api/fund/performance/nav", {"thscode": code, "range": "y1", "nav_type": "adj"},
+            )
+            items = nav.get("item") or []
+            if items and isinstance(items[-1], dict):
+                last = items[-1]
+                out.update({
+                    "nav": _to_float(last.get("nav")),
+                    "nav_acc": _to_float(last.get("nav_acc") or last.get("adj_nav")),
+                    "nav_date": _iso_of_ms(last.get("date_ms")) if last.get("date_ms") else None,
+                })
+        except FuyaoError as e:
+            logger.warning("扶摇基金净值 %s 失败: %s", code, e)
+        return [out] if (out.get("name") or out.get("nav")) else []
+
+    # ==================== sector (同花顺指数/成分股) ====================
+
+    def get_sector(self, tag: str = "cn_concept") -> list[dict]:
+        """同花顺指数列表（tag=cn_concept 概念 / industry 行业 / region 地域 / tszs 特色）。"""
+        try:
+            data = self._get_client()._get("/api/a-share-index/catalog/ths-index-list", {"tag": tag})
+            return [x for x in (data.get("item") or []) if isinstance(x, dict)]
+        except FuyaoError as e:
+            logger.warning("扶摇同花顺指数列表失败: %s", e)
+            return []
+
+    def get_sector_stocks(self, sector_code: str) -> list[dict]:
+        """同花顺指数成分股（支持 88xxxx.TI 板块与沪深300等标准指数）。"""
+        try:
+            data = self._get_client()._get("/api/a-share-index/constituents/ths-stock-list", {"thscode": sector_code})
+            rows = []
+            for x in (data.get("item") or []):
+                if isinstance(x, dict):
+                    rows.append({
+                        "sector_code": sector_code,
+                        "symbol": x.get("thscode") or x.get("ticker"),
+                        "name": x.get("name"),
+                    })
+            return rows
+        except FuyaoError as e:
+            logger.warning("扶摇指数成分股 %s 失败: %s", sector_code, e)
+            return []

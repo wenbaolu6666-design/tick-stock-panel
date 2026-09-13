@@ -1,0 +1,15 @@
+# TSP built-in CLS (财联社) telegraph plugin — 按上游拆分自 astock_ext。
+# 上游: www.cls.cn 7x24 电报 (签名算法 md5(sha1(sorted qs)), 零 key)。
+name: cls_ext
+display_name: "财联社（电报）"
+runtime: none
+entry: app.plugins.cls_ext.provider:ClsExtProvider
+check: app.plugins.cls_ext.provider:availability
+datasets: [news]
+description: "财联社 7x24 电报快讯流（v1 接口 + 本地签名，零 Key）。签名版实现待实测，市场级快讯可由东财 7x24 (astock_ext) 替代。"
+homepage: "https://www.cls.cn/telegraph"
+inventory:
+  - dataset: news
+    name: "7x24 电报"
+    desc: "财联社滚动快讯：标题/正文/发布时间（市场级，无个股维度过滤）"
+    upstream: "财联社 www.cls.cn/v1/roll/get_roll_list (本地签名)"

@@ -17,6 +17,7 @@ from app.api import (
     alerts,
     analysis,
     backtest,
+    dashboard,
     data,
     ext_data,
     financials,
@@ -449,6 +450,7 @@ async def auth_middleware(request: Request, call_next):
 
 # 路由
 app.include_router(core_router)
+app.include_router(dashboard.router)
 app.include_router(auth_api.router)
 app.include_router(kline.router)
 app.include_router(watchlist.router)

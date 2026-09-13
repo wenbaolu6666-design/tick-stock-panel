@@ -1,0 +1,54 @@
+# TSP built-in extended data source via TdxQuant HTTP gateway (GP/BK/SC/GO/ZDT series).
+name: tdx_ext
+display_name: "通达信扩展数据"
+runtime: none
+entry: app.plugins.tdx_ext.provider:TdxExtProvider
+check: app.plugins.tdx_ext.provider:availability
+datasets: [dragon_tiger, limit_updown, market_overview, consensus, sector, survey, pledge, score, margin, block_trade, corp_events]
+description: "通达信TQ扩展数据：龙虎榜(GP)/涨跌停(ZDT)/市场总览(SC)/一致预期与业绩预告(GO)/板块行情(BK)/机构调研(GP10)/股权质押(GP19-20)/综合评分(GP44-45)/融资融券(GP3·11-13)/大宗交易(GP4)/公司事件(解禁GO26-27+户数GP1+分红GP30)。本地网关零封IP风险，需TQ客户端在线。"
+homepage: "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1cfsjkbf8f3is/"
+inventory:
+  - dataset: dragon_tiger
+    name: "龙虎榜（GP 系列）"
+    desc: "GP02 买卖总计/GP08-09 机构买卖/GP17 营业部/GP18 沪深股通/GP37 上榜类型与连续天数/GP42 专业机构净额"
+    upstream: "TQ get_gpjy_value (本地通达信客户端专业数据)"
+  - dataset: limit_updown
+    name: "涨跌停（ZDT）"
+    desc: "ZDTStatusNow 8 种状态(自然涨停/一字板/曾涨停...)/首次封板时间/开板次数/最高封单量/连板天数/致涨停金额"
+    upstream: "TQ get_zdt_data"
+  - dataset: market_overview
+    name: "市场总览（SC 系列）"
+    desc: "SC01 两融余额/SC02 陆股通流入/SC03-04 涨跌停家数/SC31 涨跌家数/SC23 连板家数/SC33 市场总封单/SC28-32 新高新低 等 SC01~SC42"
+    upstream: "TQ get_scjy_value"
+  - dataset: consensus
+    name: "一致预期（GO 系列）"
+    desc: "GO3 目标价/GO4-25 EPS·净利·营收·ROE·PE 三年一致预期/GO35-39 业绩预告/GO40-41 业绩快报"
+    upstream: "TQ get_gp_one_data"
+  - dataset: sector
+    name: "板块行情（BK 系列）"
+    desc: "BK5-8 板块 PE/PB/PS/PC/BK9 涨跌家数/BK10-11 市值/BK12-13 涨停跌停数/BK14 市场高度/BK15 两融/BK16 陆股通 等 BK5~BK19"
+    upstream: "TQ get_bkjy_value + get_sector_list"
+  - dataset: survey
+    name: "机构调研"
+    desc: "近 3 月调研次数/接待机构家数"
+    upstream: "TQ get_gpjy_value GP10"
+  - dataset: pledge
+    name: "股权质押"
+    desc: "质押数量/质押比例"
+    upstream: "TQ get_gpjy_value GP19/GP20"
+  - dataset: score
+    name: "综合评分"
+    desc: "股票综合评分/评级系数"
+    upstream: "TQ get_gpjy_value GP44/GP45"
+  - dataset: margin
+    name: "融资融券"
+    desc: "两融余额/余量、融资买入/偿还、融券卖出/偿还、净买/净卖"
+    upstream: "TQ get_gpjy_value GP3/GP11/GP12/GP13"
+  - dataset: block_trade
+    name: "大宗交易"
+    desc: "大宗成交价/量/额"
+    upstream: "TQ get_gpjy_value GP4"
+  - dataset: corp_events
+    name: "公司事件（解禁/户数/分红）"
+    desc: "解禁日与数量、股东户数、分红送转（kind 列区分）"
+    upstream: "TQ get_gp_one_data GO26/GO27 + get_gpjy_value GP1/GP30"

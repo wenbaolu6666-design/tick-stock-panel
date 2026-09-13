@@ -1,14 +1,34 @@
 # stock-sdk 内置可选数据源插件
-# ⚠️ 合规提示: 本插件通过 stock-sdk 抓取第三方财经网站(如东方财富)的行情接口,
+# ⚠️ 合规提示: 本插件通过 stock-sdk(Node) 抓取东方财富行情接口,
 #    未经对方授权,可能违反其服务条款并涉及交易所行情版权问题。
 #    Docker 默认不打包(INCLUDE_STOCKSDK=0);启用即视为使用者知悉并自行承担合规责任。
 #    开发模式下需手动安装依赖: cd backend/app/plugins/stocksdk && npm install
+#
+# 数据来源: stock-sdk npm 包的 cn 适配器 = 纯东财通道 (bridge.mjs 实测调用):
+#   daily   → sdk.kline.cn       → 东财 push2his /api/qt/stock/kline/get
+#   adj     → hfq 与 none 两套日K收盘相除 → ex_factor (本地推导)
+#   minute  → sdk.kline.cnMinute → 东财 push2his kline (分钟周期)
+#   realtime/instruments → sdk.batch.cn → 东财 push2 /api/qt/clist/get 全市场分页
+# (SDK 包内另有雪球/腾讯分钟/新浪期权/资金流/北向适配器, TSP 未使用)
 
 name: stocksdk
-display_name: "stock-sdk"
+display_name: "stock-sdk（东财行情桥）"
 runtime: node
 entry: app.plugins.stocksdk.provider:StockSDKProvider
 check: app.plugins.stocksdk.bridge:availability
-datasets: [daily, adj_factor, minute, realtime]
-description: "抓取第三方财经网站行情接口(存在版权与反爬风险,使用需自行评估合规责任)。日K/除权/分钟/实时全市场。需运行环境含 Node.js 18+。Docker 默认不打包。"
+datasets: [daily, minute, realtime]
+description: "Node 桥接 stock-sdk 包 = 东财行情通道：日K/分钟K(push2his kline)、全市场实时(push2 clist)。与「东方财富 A股」同源不同桥(Python 直连 vs Node SDK), 含串行限流。存在版权与反爬风险,使用需自行评估。需 Node.js 18+。（原 hfq 差分除权因子已下线: hfq/none 相除是漂移比率而非单事件因子, 曾污染因子库）"
 install_hint: "Docker 需 --build-arg INCLUDE_STOCKSDK=1 才打包;开发模式: cd backend/app/plugins/stocksdk && npm install"
+inventory:
+  - dataset: daily
+    name: "日K（不复权/前复权/后复权）"
+    desc: "period=daily, adjust=''|qfq|hfq, 支持 startDate/endDate 窗口"
+    upstream: "东财 push2his /api/qt/stock/kline/get (经 stock-sdk kline.cn)"
+  - dataset: minute
+    name: "分钟K"
+    desc: "cnMinute, period 默认 5 分钟"
+    upstream: "东财 push2his /api/qt/stock/kline/get 分钟周期 (经 stock-sdk)"
+  - dataset: realtime
+    name: "全市场实时快照"
+    desc: "batch.cn 全市场枚举: 名称/现价/昨收/开高低/量/额/涨跌幅; instruments 同源附总股本/流通股本/涨跌停价"
+    upstream: "东财 push2 /api/qt/clist/get 全市场分页 (经 stock-sdk batch.cn)"

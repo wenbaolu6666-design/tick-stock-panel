@@ -1,0 +1,31 @@
+# TSP built-in A-share data source backed by Mootdx / TDX quotes.
+name: mootdx
+display_name: "通达信/Mootdx A股"
+runtime: python
+entry: app.plugins.mootdx.provider:MootdxProvider
+check: app.plugins.mootdx.provider:availability
+datasets: [daily, minute, full_minute, realtime, depth5]
+description: "通达信 TCP 行情：不复权日K、1分钟K、盘中全市场快照、五档盘口(TCP quotes)。需要安装 mootdx；日K按原始价提供，复权由 TSP enriched 管道用 adj_factor 计算。"
+install_hint: "uv pip install --python backend/.venv/Scripts/python.exe mootdx"
+homepage: "https://github.com/mootdx/mootdx"
+inventory:
+  - dataset: daily
+    name: "日K（不复权）"
+    desc: "TCP 7709 bars(frequency=9)，每页 800 行，原始价"
+    upstream: "通达信行情服务器 TCP 直连 (mootdx/pytdx 协议, 内置多服务器探测)"
+  - dataset: minute
+    name: "1分钟K"
+    desc: "bars(frequency=8) 近端分钟线"
+    upstream: "通达信行情服务器 TCP 直连"
+  - dataset: full_minute
+    name: "当日全量分钟"
+    desc: "minute() 当日 1 分钟线"
+    upstream: "通达信行情服务器 TCP 直连"
+  - dataset: realtime
+    name: "实时快照（L1）"
+    desc: "quotes() 实时报价"
+    upstream: "通达信行情服务器 TCP 直连"
+  - dataset: depth5
+    name: "五档盘口"
+    desc: "TCP quotes bid1..5/ask1..5 价量（逐票，小批量场景）"
+    upstream: "通达信行情服务器 TCP 直连 (pytdx get_security_quotes)"

@@ -1,0 +1,18 @@
+# TSP built-in A-share adjustment-factor source via Sina public qfq endpoint.
+name: sina_astock
+display_name: "新浪复权因子"
+runtime: none
+entry: app.plugins.sina_astock.provider:SinaAstockProvider
+check: app.plugins.sina_astock.provider:availability
+datasets: [adj_factor, financial]
+description: "新浪 qfq 复权因子：把累计前复权因子转换成 TSP 单事件 ex_factor（除权日 pre/post 比值）。北交所无复权因子，自动返回空并回退 TickFlow。"
+homepage: "https://finance.sina.com.cn/"
+inventory:
+  - dataset: adj_factor
+    name: "qfq 复权因子序列"
+    desc: "累计前复权因子日期序列 → 转换为单事件 ex_factor（本地换算）"
+    upstream: "新浪 finance.sina.com.cn/realstock/company/{symbol}/{qfq|hfq}.js"
+  - dataset: financial
+    name: "三大报表"
+    desc: "资产负债表/利润表/现金流量表按报告期倒序，科目值+同比"
+    upstream: "新浪 quotes.sina.cn CompanyFinanceService.getFinanceReport2022 (fzb/lrb/llb)"

@@ -1,0 +1,26 @@
+# TSP built-in A-share data source via Eastmoney public quote APIs.
+name: eastmoney_astock
+display_name: "东方财富 A股"
+runtime: none
+entry: app.plugins.eastmoney_astock.provider:EastmoneyAstockProvider
+check: app.plugins.eastmoney_astock.provider:availability
+datasets: [daily, minute, full_minute, realtime]
+description: "东财直连原始日K/分钟K/全市场快照，零 key。已内置串行限流（默认 1s/请求），批量全市场同步会很慢，建议仅作为 fallback 或小样本使用。"
+homepage: "https://quote.eastmoney.com/"
+inventory:
+  - dataset: daily
+    name: "日K（不复权）"
+    desc: "原始价日K线，复权由 TSP enriched 管道计算"
+    upstream: "东财 push2his /api/qt/stock/kline/get (klt=101)"
+  - dataset: minute
+    name: "1分钟K"
+    desc: "分钟K线（近端窗口）"
+    upstream: "东财 push2his kline/get (klt=1)"
+  - dataset: full_minute
+    name: "当日全量分钟"
+    desc: "盘中全市场当日分钟落盘"
+    upstream: "东财 push2his"
+  - dataset: realtime
+    name: "全市场实时快照"
+    desc: "全市场最新价/涨跌幅/成交量快照"
+    upstream: "东财 push2 /api/qt/clist/get (ulist)"

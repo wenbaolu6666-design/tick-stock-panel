@@ -1,0 +1,35 @@
+# TSP built-in THS (同花顺) web-surface data — 按上游拆分自 astock_ext。
+# 上游: basic.10jqka.com.cn / data.10jqka.com.cn / data.hexin.cn (同花顺网页系)。
+name: ths_basic
+display_name: "同花顺数据（网页）"
+runtime: none
+entry: app.plugins.ths_basic.provider:ThsBasicProvider
+check: app.plugins.ths_basic.provider:availability
+datasets: [money_flow, research, limit_updown, daily, financial, consensus]
+description: "同花顺网页系数据：个股盈利预测EPS/净利润(worth.html)、涨停揭秘(涨停原因/板型/封板成功率/封单额)、北向资金分钟累计(hsgtApi)、K线全历史(2001起, d.10jqka 分年文件, 原始价含成交额)、F10 三表 JSON(basic.10jqka)。全部公开接口无需 Key。"
+homepage: "https://basic.10jqka.com.cn/"
+inventory:
+  - dataset: research
+    name: "盈利预测 EPS/净利润"
+    desc: "个股价值分析表：未来1-3年一致预期 EPS/净利润/ROE"
+    upstream: "同花顺 basic.10jqka.com.cn/new/{code}/worth.html"
+  - dataset: limit_updown
+    name: "涨停揭秘"
+    desc: "当日涨停池：涨停原因/板型/封板成功率/炸板次数/封单额/连板高度"
+    upstream: "同花顺 data.10jqka.com.cn/dataapi/limit_up/limit_up_pool"
+  - dataset: money_flow
+    name: "北向资金（分钟累计）"
+    desc: "沪深股通当日分钟级累计净买入（亿元）；历史日度数据上游已停更"
+    upstream: "同花顺 data.hexin.cn/market/hsgtApi/method/dayChart"
+  - dataset: daily
+    name: "K线全历史（2001 起）"
+    desc: "原始价日K：date,open,high,low,close,volume(股→手),amount(元)；按年分文件"
+    upstream: "同花顺 d.10jqka.com.cn/v6/line/hs_{code}/01/{year}.js"
+  - dataset: financial
+    name: "F10 三表 JSON"
+    desc: "资产负债(_debt)/利润(_benefit)/现金流(_cash)：科目 × 报告期值矩阵"
+    upstream: "同花顺 basic.10jqka.com.cn/api/stock/finance/{code}_{report}.json"
+  - dataset: consensus
+    name: "一致预期 EPS"
+    desc: "年度×机构数×最低/均值/最高 EPS（机构数<3 谨慎）"
+    upstream: "同花顺 basic.10jqka.com.cn/new/{code}/worth.html"

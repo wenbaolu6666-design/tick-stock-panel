@@ -165,6 +165,16 @@ if (-not (Test-Path (Join-Path $BackendDir '.venv')) -or $BackendExtraArgs.Count
     Log-Ok 'backend deps installed'
 }
 
+# ===== 3.1 Optional plugin deps (e.g. mootdx) =====
+# uv sync --frozen ????? lock ???????????????????
+# ? plugins/*/requirements.txt ???????? venv????????
+$pluginReq = Get-ChildItem (Join-Path $BackendDir 'app\plugins') -Recurse -Filter requirements.txt -ErrorAction SilentlyContinue
+foreach ($req in $pluginReq) {
+    Log-Info "installing plugin deps: $($req.Directory.Name)"
+    & uv pip install --python (Join-Path $BackendDir '.venv\Scripts\python.exe') -r $req.FullName 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { Log-Err "plugin deps install failed: $($req.FullName)"; exit 1 }
+}
+
 if (-not (Test-Path (Join-Path $FrontendDir 'node_modules'))) {
     Log-Info 'first run - installing Node deps...'
     Push-Location $FrontendDir

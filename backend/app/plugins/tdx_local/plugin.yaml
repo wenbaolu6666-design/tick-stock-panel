@@ -1,0 +1,17 @@
+# TSP built-in daily source reading TDX vipdoc .day files directly from disk.
+name: tdx_local
+display_name: "通达信本地日线"
+runtime: none
+entry: app.plugins.tdx_local.provider:TdxLocalProvider
+check: app.plugins.tdx_local.provider:availability
+datasets: [daily, minute]
+description: "通达信本地 vipdoc 直读：不复权日K(.day)、分钟K(.lc5 五分钟原生 98 交易日/.lc1 一分钟, 日期锚定同标的日线序列)。本地只到上一交易日, 当天需等盘后下载(~16:30)。零网络零客户端依赖。"
+inventory:
+  - dataset: daily
+    name: "日K（不复权）"
+    desc: "本地 .day 二进制日线，无网络依赖"
+    upstream: "本地文件 D:\\new_tdx_mock\\vipdoc\\{sh,sz,bj}\\lday (通达信 hsjday 数据包)"
+  - dataset: minute
+    name: "分钟K（本地 vipdoc）"
+    desc: ".lc5 五分钟原生(约98交易日) / .lc1 一分钟(240根/日)，volume 股→手；日期由 .day 序列锚定"
+    upstream: "本地文件 D:\\new_tdx_mock\\vipdoc\\{sh,sz}\\fzline(.lc5) / minline(.lc1) (通达信盘后下载, 只到上一交易日)"

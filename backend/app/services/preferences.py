@@ -269,6 +269,14 @@ def _allowed_data_providers() -> set[str]:
         return set(_ALLOWED_DATA_PROVIDERS)
 
 
+def get_disabled_sources() -> list[str]:
+    """用户手动停用的数据源（能力路由候选中移除; 当前正被路由的源会显示不可用）。"""
+    raw = load().get("disabled_sources", [])
+    if not isinstance(raw, list):
+        return []
+    return [str(x) for x in raw if x]
+
+
 def get_daily_data_provider() -> str:
     provider = str(load().get("daily_data_provider", "tickflow") or "tickflow").lower()
     return provider if provider in _allowed_data_providers() else "tickflow"
@@ -303,6 +311,37 @@ def get_realtime_data_provider() -> str:
 def get_financial_provider() -> str:
     provider = str(load().get("financial_data_provider", "tickflow") or "tickflow").lower()
     return provider if provider in _allowed_data_providers() else "tickflow"
+
+def get_news_data_provider() -> str:
+    provider = str(load().get("news_data_provider", "tickflow") or "tickflow").lower()
+    return provider if provider in _allowed_data_providers() else "tickflow"
+
+
+def get_dragon_tiger_data_provider() -> str:
+    provider = str(load().get("dragon_tiger_data_provider", "tickflow") or "tickflow").lower()
+    return provider if provider in _allowed_data_providers() else "tickflow"
+
+
+def get_limit_updown_data_provider() -> str:
+    provider = str(load().get("limit_updown_data_provider", "tickflow") or "tickflow").lower()
+    return provider if provider in _allowed_data_providers() else "tickflow"
+
+
+def get_market_overview_data_provider() -> str:
+    provider = str(load().get("market_overview_data_provider", "tickflow") or "tickflow").lower()
+    return provider if provider in _allowed_data_providers() else "tickflow"
+
+
+def get_consensus_data_provider() -> str:
+    provider = str(load().get("consensus_data_provider", "tickflow") or "tickflow").lower()
+    return provider if provider in _allowed_data_providers() else "tickflow"
+
+
+def get_sector_data_provider() -> str:
+    provider = str(load().get("sector_data_provider", "tickflow") or "tickflow").lower()
+    return provider if provider in _allowed_data_providers() else "tickflow"
+
+
 
 
 # ===== 盘后管道拉取内容开关 (A股 / ETF / 指数 独立控制) =====
@@ -1013,3 +1052,95 @@ def set_financial_sync_time(table: str, iso_ts: str) -> None:
     times = get_financial_sync_times()
     times[table] = iso_ts
     save({"financial_sync_times": times})
+
+
+def get_margin_data_provider() -> str:
+    provider = str(load().get("margin_data_provider", "tickflow") or "tickflow").lower()
+    return provider if provider in _allowed_data_providers() else "tickflow"
+
+
+def get_block_trade_data_provider() -> str:
+    provider = str(load().get("block_trade_data_provider", "tickflow") or "tickflow").lower()
+    return provider if provider in _allowed_data_providers() else "tickflow"
+
+
+def get_chip_data_provider() -> str:
+    provider = str(load().get("chip_data_provider", "tickflow") or "tickflow").lower()
+    return provider if provider in _allowed_data_providers() else "tickflow"
+
+
+def get_research_data_provider() -> str:
+    provider = str(load().get("research_data_provider", "tickflow") or "tickflow").lower()
+    return provider if provider in _allowed_data_providers() else "tickflow"
+
+
+def get_announcements_data_provider() -> str:
+    provider = str(load().get("announcements_data_provider", "tickflow") or "tickflow").lower()
+    return provider if provider in _allowed_data_providers() else "tickflow"
+
+
+def get_macro_data_provider() -> str:
+    provider = str(load().get("macro_data_provider", "tickflow") or "tickflow").lower()
+    return provider if provider in _allowed_data_providers() else "tickflow"
+
+
+def get_options_data_provider() -> str:
+    provider = str(load().get("options_data_provider", "tickflow") or "tickflow").lower()
+    return provider if provider in _allowed_data_providers() else "tickflow"
+
+def get_corp_events_data_provider() -> str:
+    provider = str(load().get("corp_events_data_provider", "tickflow") or "tickflow").lower()
+    return provider if provider in _allowed_data_providers() else "tickflow"
+
+def get_money_flow_data_provider() -> str:
+    provider = str(load().get("money_flow_data_provider", "tickflow") or "tickflow").lower()
+    return provider if provider in _allowed_data_providers() else "tickflow"
+
+def get_hot_list_data_provider() -> str:
+    provider = str(load().get("hot_list_data_provider", "tickflow") or "tickflow").lower()
+    return provider if provider in _allowed_data_providers() else "tickflow"
+
+
+def get_anomaly_data_provider() -> str:
+    provider = str(load().get("anomaly_data_provider", "tickflow") or "tickflow").lower()
+    return provider if provider in _allowed_data_providers() else "tickflow"
+
+
+def get_valuation_data_provider() -> str:
+    provider = str(load().get("valuation_data_provider", "tickflow") or "tickflow").lower()
+    return provider if provider in _allowed_data_providers() else "tickflow"
+
+
+def get_kzz_data_provider() -> str:
+    provider = str(load().get("kzz_data_provider", "tickflow") or "tickflow").lower()
+    return provider if provider in _allowed_data_providers() else "tickflow"
+
+
+def get_ipo_data_provider() -> str:
+    provider = str(load().get("ipo_data_provider", "tickflow") or "tickflow").lower()
+    return provider if provider in _allowed_data_providers() else "tickflow"
+
+
+def get_survey_data_provider() -> str:
+    provider = str(load().get("survey_data_provider", "tickflow") or "tickflow").lower()
+    return provider if provider in _allowed_data_providers() else "tickflow"
+
+
+def get_pledge_data_provider() -> str:
+    provider = str(load().get("pledge_data_provider", "tickflow") or "tickflow").lower()
+    return provider if provider in _allowed_data_providers() else "tickflow"
+
+
+def get_score_data_provider() -> str:
+    provider = str(load().get("score_data_provider", "tickflow") or "tickflow").lower()
+    return provider if provider in _allowed_data_providers() else "tickflow"
+
+
+def get_fund_data_provider() -> str:
+    provider = str(load().get("fund_data_provider", "tickflow") or "tickflow").lower()
+    return provider if provider in _allowed_data_providers() else "tickflow"
+
+
+def get_auction_data_provider() -> str:
+    provider = str(load().get("auction_data_provider", "tickflow") or "tickflow").lower()
+    return provider if provider in _allowed_data_providers() else "tickflow"

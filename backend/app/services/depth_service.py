@@ -291,8 +291,33 @@ class DepthService:
         if persist and enriched_date:
             self._persist(enriched_date)
 
+    def _call_depth_batch_custom(self, symbols: list[str]) -> dict:
+        """depth5 插件分流: 宽表 DataFrame 转 {symbol: {ask_volumes, bid_volumes, timestamp}}。"""
+        from app.services import preferences
+        from app.data_providers import custom as custom_sources
+        try:
+            provider = custom_sources.get_provider(preferences.get_depth5_data_provider())
+            df = provider.get_depth5(symbols)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("depth5 plugin fetch failed: %s", e)
+            return {}
+        if df.is_empty() or "symbol" not in df.columns:
+            return {}
+        result: dict = {}
+        for row in df.to_dicts():
+            sym = row.get("symbol")
+            if not sym:
+                continue
+            result[sym] = {
+                "ask_volumes": [row.get(f"ask{i}_vol") for i in range(1, 6)],
+                "bid_volumes": [row.get(f"bid{i}_vol") for i in range(1, 6)],
+                "timestamp": row.get("timestamp"),
+            }
+        return result
     def _call_depth_batch(self, symbols: list[str]) -> dict:
         """调 tf.depth.batch, 按 capset 的 batch 切片 + 节流。返回 {symbol: MarketDepth}。"""
+        if self._depth5_is_custom():
+            return self._call_depth_batch_custom(symbols)
         from app.tickflow.client import get_client
         tf = get_client()
 
@@ -589,9 +614,19 @@ class DepthService:
     # 工具
     # ================================================================
 
+    def _depth5_is_custom(self) -> bool:
+        """depth5 当前路由是否走插件（绕过 TickFlow 套餐门槛）。"""
+        from app.services import preferences
+        provider = preferences.get_depth5_data_provider()
+        if provider == "tickflow":
+            return False
+        from app.data_providers import custom as custom_sources
+        return custom_sources.provider_has_dataset(provider, "depth5")
     def _has_capability(self) -> bool:
         capset = self._get_capset()
         from app.tickflow.capabilities import Cap
+        if self._depth5_is_custom():
+            return True
         return capset.has(Cap.DEPTH5_BATCH)
 
     def _get_capset(self):

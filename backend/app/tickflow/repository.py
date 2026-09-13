@@ -578,12 +578,13 @@ class KlineRepository:
                 logger.info("enriched refresh skipped: latest parquet empty (%.2fs)", time.perf_counter() - started)
                 return
 
-            # Step 2: 读近 300 天 14 列数据 → compute → filter(latest) → 缓存
-            # 300 日历天 ≈ 210 交易日, 覆盖 filter_history 最大 lookback(90) + warmup(60)
+            # Step 2: 读近 N 天 14 列数据 → compute → filter(latest) → 缓存
+            # 300 日历天 ≈ 210 交易日; 因子挖掘需要 786+ 交易日 (嵌套样本外 3 折),
+            # 窗口扩到 1500 日历天以覆盖全历史指标/信号 (内存约 +2GB, 启动多算 1-2 分钟)
             try:
                 from datetime import timedelta
                 from app.indicators.pipeline import compute_indicators, compute_signals, compute_limit_signals
-                start_full = latest - timedelta(days=300)
+                start_full = latest - timedelta(days=1500)
                 read_cols = [c for c in ["symbol", "date", "open", "high", "low", "close",
                                          "volume", "amount", "raw_close", "raw_high", "raw_low"]
                              if c in df_latest.columns]
@@ -2162,6 +2163,14 @@ class KlineRepository:
             if generation_asset is not None
             else None
         )
+        # 日K表列规范化: 实时 flush 会附带 quote_ts 等过程列, 落盘前剥离,
+        # 避免分区间 schema 漂移(裸 polars scan 会炸 extra column)
+        canonical = {"kline_daily", "kline_etf_daily", "kline_index_daily"}
+        keep_cols = ["symbol", "date", "open", "high", "low", "close", "volume", "amount"]
+        if table in canonical:
+            extra = [c for c in df.columns if c not in keep_cols]
+            if extra:
+                df = df.drop(extra)
         with self._write_lock:
             for date_df in df.partition_by("date"):
                 dt = date_df["date"][0]
@@ -2171,6 +2180,10 @@ class KlineRepository:
                 existing = pl.DataFrame()
                 if out.exists():
                     existing = pl.read_parquet(out)
+                    if table in canonical:
+                        extra_e = [c for c in existing.columns if c not in keep_cols]
+                        if extra_e:
+                            existing = existing.drop(extra_e)
                     date_df = pl.concat([existing, date_df], how="diagonal_relaxed").unique(
                         subset=["symbol", "date"], keep="last"
                     )
@@ -2308,6 +2321,11 @@ class KlineRepository:
         if not table:
             return
         base = self.store.data_dir / table
+        # 日K表列规范化: 与 _write_daily_partition 同口径, 剥掉 quote_ts 等过程列
+        keep_cols = ["symbol", "date", "open", "high", "low", "close", "volume", "amount"]
+        extra = [c for c in df.columns if c not in keep_cols]
+        if extra:
+            df = df.drop(extra)
         dt = df["date"][0]
         ds = dt.isoformat() if hasattr(dt, "isoformat") else str(dt)
         out = base / f"date={ds}" / "part.parquet"

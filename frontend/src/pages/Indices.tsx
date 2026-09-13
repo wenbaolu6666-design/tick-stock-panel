@@ -101,6 +101,14 @@ export function Indices() {
     queryFn: () => api.indexDaily(selectedSymbol, 180, range),
     enabled: !!selectedSymbol,
     placeholderData: (prev) => prev,
+    // 盘中实时: 交易时段(9:15-15:05, 周一~五)每 20s 重取日K, 最后一根蜡烛随实时价跳动
+    refetchInterval: (() => {
+      const now = new Date()
+      const day = now.getDay()
+      const mins = now.getHours() * 60 + now.getMinutes()
+      const inSession = day >= 1 && day <= 5 && mins >= 9 * 60 + 15 && mins <= 15 * 60 + 5
+      return inSession ? 20_000 : false
+    })(),
   })
 
   const minute = useQuery({
@@ -117,6 +125,15 @@ export function Indices() {
       qc.invalidateQueries({ queryKey: ['index-daily'] })
     },
   })
+
+  // 默认选中最新交易日: 日K数据到达后自动补上分时日期 (否则分时面板一直「暂无分时数据」)
+  const dailyRows = daily.data?.rows ?? []
+  useEffect(() => {
+    if (!selectedDate && dailyRows.length > 0) {
+      const last = dailyRows[dailyRows.length - 1]?.date
+      if (last) setSelectedDate(typeof last === 'string' ? last : String(last))
+    }
+  }, [dailyRows, selectedDate])
 
   const quoteBySymbol = useMemo(() => {
     const m = new Map<string, any>()

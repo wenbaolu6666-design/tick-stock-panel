@@ -315,6 +315,7 @@ def normalize(rule: dict) -> dict:
     r.setdefault("threshold_pct", 70.0 if r.get("type") == "abnormal" else 1.0)
     r.setdefault("window_minutes", 5)
     r.setdefault("strategy_id", None)
+    r.setdefault("regime_states", None)
     # direction 默认值: ladder/sector 用 "up", abnormal 用 "both", 其余用 "entry"
     r.setdefault(
         "direction",

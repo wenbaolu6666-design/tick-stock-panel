@@ -1,0 +1,46 @@
+# TSP built-in data source via official TdxQuant local HTTP gateway (127.0.0.1:17709).
+name: tdx_quant
+display_name: "通达信量化平台"
+runtime: none
+entry: app.plugins.tdx_quant.provider:TdxQuantProvider
+check: app.plugins.tdx_quant.provider:availability
+datasets: [daily, minute, full_minute, financial, depth5, valuation, kzz, ipo, adj_factor]
+description: "调用本机通达信TQ客户端的 HTTP 网关获取日K/分钟K/财务五表，另含估值(get_more_info)/可转债(get_kzz_info)/新股申购(get_ipo_info)/除权因子(ForwardFactor 差分推导)。需要先启动支持TQ的通达信金融终端/量化模拟，并开启盘后数据下载。"
+homepage: "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1cfsjkbf8f3is/"
+inventory:
+  - dataset: daily
+    name: "日K（含前复权因子）"
+    desc: "get_market_data period=1d，含 OHLC/量(股)/额(万)/ForwardFactor"
+    upstream: "TQ HTTP 网关 JSON-RPC get_market_data (本机通达信客户端)"
+  - dataset: minute
+    name: "分钟K"
+    desc: "get_market_data period=1m 分时K线"
+    upstream: "TQ get_market_data"
+  - dataset: full_minute
+    name: "全量分钟"
+    desc: "盘中全市场当日分钟落盘"
+    upstream: "TQ get_market_data"
+  - dataset: financial
+    name: "财务五表（FN1~FN584）"
+    desc: "利润表/资产负债表/现金流量表/指标(ROE·EPS·毛利率·增长率等)/股本股东(FN238-247)，另含机构持股/业绩预告/快报字段"
+    upstream: "TQ get_financial_data (table_list 字段码 + stock_page_index 分页)"
+  - dataset: depth5
+    name: "五档盘口"
+    desc: "快照 Buyp[5]/Buyv[5]/Sellp[5]/Sellv[5]，另含内外盘/涨跌家数/涨速"
+    upstream: "TQ get_market_snapshot"
+  - dataset: valuation
+    name: "估值快照"
+    desc: "动态PE/静态PE-TTM/PB-MRQ/股息率/总流通市值"
+    upstream: "TQ get_more_info (DynaPE/StaticPE_TTM/PB_MRQ/DYRatio/Zsz/Ltsz)"
+  - dataset: kzz
+    name: "可转债信息"
+    desc: "转股价/溢价率/纯债价值/到期收益率/强赎回售触发价/双评级/剩余规模"
+    upstream: "TQ get_kzz_info (KZZ 系列 25 字段)"
+  - dataset: ipo
+    name: "新股/新债申购"
+    desc: "申购代码/日期/价格/发行市盈率/申购上限（今天及以后）"
+    upstream: "TQ get_ipo_info (ipo_type/ipo_date)"
+  - dataset: adj_factor
+    name: "除权因子（单事件）"
+    desc: "累积 ForwardFactor 逐日差分 → 单事件 ex_factor（仅事件日）"
+    upstream: "TQ get_market_data (dividend_type=none, ForwardFactor 列)"

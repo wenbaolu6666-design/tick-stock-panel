@@ -90,6 +90,9 @@ class RuleModel(BaseModel):
     threshold_pct: float = 1.0
     window_minutes: int = 5
     strategy_id: str | None = None
+    # 策略型规则的环境闸门: 仅当最新市场环境 state 在列表内才放行信号
+    # (如 ["strong","lean_strong"] = 仅强势/偏强接力; None = 不启用)
+    regime_states: list[str] | None = None
     direction: str = "entry"  # entry | exit | both | (sector/ladder/abnormal: up|down|both)
     notify_events: list[str] | None = None
     score_min: float | None = None

@@ -1,0 +1,22 @@
+# TSP built-in realtime source via Tencent Finance public quote endpoint.
+name: tencent_quote
+display_name: "腾讯行情"
+runtime: none
+entry: app.plugins.tencent_quote.provider:TencentQuoteProvider
+check: app.plugins.tencent_quote.provider:availability
+datasets: [realtime, daily, minute]
+description: "腾讯行情：qt.gtimg.cn 批量实时报价（88字段含PE/PB/市值/涨跌停价）、web.ifzq.gtimg.cn 前复权日K(fqkline, ≤320根/次)、分钟K(mkline m1~m60)。标的全集取自 TSP instruments 维表。"
+homepage: "https://gu.qq.com/"
+inventory:
+  - dataset: realtime
+    name: "批量实时报价"
+    desc: "现价/涨跌/换手率/PE-TTM(39)/PE静(52)/PB(46)/流通市值(44)/总市值(45)/涨跌停价(47-48)/量比"
+    upstream: "腾讯 qt.gtimg.cn/q= (GBK, ~分隔 88 字段)"
+  - dataset: daily
+    name: "前复权日K"
+    desc: "fqkline 行序 [date,open,close,high,low,volume(手)]，无成交额字段；单次≤320根"
+    upstream: "腾讯 web.ifzq.gtimg.cn/appstock/app/fqkline/get"
+  - dataset: minute
+    name: "分钟K"
+    desc: "mkline m1/m5/m15/m30/m60，≤320根，datetime 北京墙钟"
+    upstream: "腾讯 ifzq.gtimg.cn/appstock/app/kline/mkline"

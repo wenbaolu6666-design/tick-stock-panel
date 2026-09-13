@@ -1,0 +1,25 @@
+# TSP built-in baostock plugin — 免注册 TCP 数据源 (估值历史/行业快照)。
+# 上游: baostock TCP (query_history_k_data_plus / query_stock_industry), 免注册。
+# 限制: 不支持北交所; 2016 起估值; 行业为证监会口径。
+name: baostock
+display_name: "Baostock（估值/分红）"
+runtime: python
+entry: app.plugins.baostock.provider:BaostockProvider
+check: app.plugins.baostock.provider:availability
+datasets: [valuation, sector, corp_events]
+description: "baostock 免注册数据：日频估值历史 PE-TTM/PB-MRQ/PS-TTM/PCF-TTM+换手率（2016 起，五池估值回测可用）、全市场行业归属快照（证监会口径）。不支持北交所。"
+install_hint: "uv pip install --python backend/.venv/Scripts/python.exe baostock"
+homepage: "https://baostock.com/"
+inventory:
+  - dataset: valuation
+    name: "估值历史（日频）"
+    desc: "pe_ttm/pb_mrq/ps_ttm/pcf_ttm + 收盘 + 换手率，2016 起全历史（唯一免注册估值历史源）"
+    upstream: "baostock query_history_k_data_plus (fields=peTTM,pbMRQ,psTTM,pcfNcfTTM,turn)"
+  - dataset: sector
+    name: "行业归属快照"
+    desc: "全市场行业分类（证监会口径，非申万）"
+    upstream: "baostock query_stock_industry"
+  - dataset: corp_events
+    name: "分红送转"
+    desc: "派息日/送股比例/派息税前/转增比例（近 3 年，kind=dividend）"
+    upstream: "baostock query_dividend_data (operate 年度)"

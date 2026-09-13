@@ -1,0 +1,19 @@
+# TSP built-in exchange-official plugin — 沪深交易所官方一手接口。
+# 上游: yunhq.sse.com.cn:32041 (沪 snap, HTTP) / www.szse.cn (深 ssjjhq 五档 + 1842_xxpl 龙虎榜)。
+name: exchange_official
+display_name: "交易所官方（沪深一手）"
+runtime: none
+entry: app.plugins.exchange_official.provider:ExchangeOfficialProvider
+check: app.plugins.exchange_official.provider:availability
+datasets: [depth5, dragon_tiger]
+description: "沪深交易所官方一手数据：官方五档快照（沪 yunhq snap / 深 ssjjhq）、深交所竞价交易公开信息（官方龙虎榜整榜）。零鉴权；沪五档为 HTTP；行情时段外五档为收盘快照。"
+homepage: "https://www.sse.com.cn/"
+inventory:
+  - dataset: depth5
+    name: "官方五档快照"
+    desc: "买卖五档价量（bid1..5/ask1..5），沪 snap 数组 / 深 ssjjhq"
+    upstream: "上交所 http://yunhq.sse.com.cn:32041/v1/sh1/snap/{code} + 深交所 www.szse.cn/api/market/ssjjhq/getTimeData"
+  - dataset: dragon_tiger
+    name: "龙虎榜（深交所官方整榜）"
+    desc: "竞价交易公开信息：上榜股/原因（官方原始口径，字段透传 raw 列）"
+    upstream: "深交所 www.szse.cn/api/report/ShowReport/data?CATALOGID=1842_xxpl"

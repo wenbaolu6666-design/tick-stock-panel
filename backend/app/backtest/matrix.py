@@ -1404,7 +1404,10 @@ def _populate_matrix_derived_arrays(
     vector_fields: list[str],
 ) -> tuple[list[str], Mapping[str, np.ndarray]]:
     instrument_wanted = set(wanted_fields)
-    if "turnover_rate" in wanted_fields and "turnover_rate" not in fields:
+    # 用 parquet_fields 判断 (而非 fields): 磁盘缓存路径会把 vector_fields 一并
+    # 预分配进 fields (全零 memmap), 旧条件因此永远不请求 float_shares,
+    # 换手率=成交量/全零 → 全 NaN 静默失败 (ETF 无换手列时全矩阵无信号)。
+    if "turnover_rate" in wanted_fields and "turnover_rate" not in parquet_fields:
         instrument_wanted.add("float_shares")
     names, instrument_fields, latest_limits = _instrument_axis_values(
         actual_symbols,
@@ -3650,7 +3653,13 @@ def _build_basic_filter_mask_uncached(market: MarketDataMatrix, config: dict) ->
         board_mask = np.zeros(len(market.symbols), dtype=bool)
         for asset_id, symbol in enumerate(market.symbols):
             board_mask[asset_id] = _symbol_in_boards(symbol, boards)
-        mask &= board_mask[None, :]
+        if board_mask.any():
+            mask &= board_mask[None, :]
+        elif config.get("_is_default"):
+            # 纯引擎默认过滤按股票板块前缀校准; ETF/指数等代码零匹配时
+            # 说明当前宇宙不适用, 整体放行 (否则默认过滤把全宇宙杀成空 mask,
+            # ETF 全市场回测无信号的根因之一)
+            return np.ones(market.shape, dtype=bool)
     return mask
 
 

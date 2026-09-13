@@ -1,0 +1,31 @@
+# TSP built-in extended data via Fuyao (同花顺数据) special-data endpoints.
+name: fuyao_ext
+display_name: "同花顺特色数据"
+runtime: none
+entry: app.plugins.fuyao_ext.provider:FuyaoExtProvider
+check: app.plugins.fuyao_ext.provider:availability
+datasets: [dragon_tiger, limit_updown, hot_list, anomaly, auction]
+api_key_env: FUYAO_API_KEY
+description: "同花顺特色数据：龙虎榜(全部/机构/游资)、涨停池/跌停池/炸板池/连板天梯、热股榜/飙升榜、个股异动原因、集合竞价快照。复用 fuyao 的 API Key。"
+homepage: "https://fuyao.aicubes.cn/docs"
+inventory:
+  - dataset: dragon_tiger
+    name: "龙虎榜榜单"
+    desc: "按交易日返回全部/机构榜/游资榜：涨跌幅/净买额/上榜原因/机构净买/游资聚合 hot_money_items"
+    upstream: "fuyao GET /api/a-share/special-data/dragon-tiger-list"
+  - dataset: limit_updown
+    name: "涨停/跌停/炸板池 + 连板天梯"
+    desc: "涨停池(连板数/封单资金/涨停原因/几天几板)、跌停池、炸板池(开板次数)、近30日连板天梯矩阵"
+    upstream: "fuyao GET /api/a-share/special-data/limit-up-pool / limit-down-pool / limit-break-pool / limit-up-ladder"
+  - dataset: hot_list
+    name: "热股榜/飙升榜/排名走势"
+    desc: "热股榜 Top30(24h/小时)、飙升榜、历史热榜(一年内)、个股排名走势(≤1年)"
+    upstream: "fuyao GET /api/a-share/special-data/hot-stock-list / skyrocket-list / hot-stock-list-history / hot-stock-rank-trend"
+  - dataset: anomaly
+    name: "个股异动原因"
+    desc: "当日异动原因列表(标签过滤) + 按股票批量查询：analysis_content/keyword_list/tag_name"
+    upstream: "fuyao GET /api/a-share/special-data/anomaly-analysis-list / anomaly-analysis-stock"
+  - dataset: auction
+    name: "集合竞价快照 + 竞价基准"
+    desc: "竞价价格/量/额/未匹配量/量比/竞价阶段；短线风向标竞价基准(高开/放量标签)"
+    upstream: "fuyao GET /api/a-share/auction/snapshot / short-term-benchmark"

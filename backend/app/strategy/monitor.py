@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 import polars as pl
+from pathlib import Path
 
 from app.market_time import cn_today
 from app.strategy import config as _strategy_config
@@ -277,6 +278,28 @@ def _group_members_or_none(rule: dict) -> frozenset[str] | None:
 
 def _is_signal_field(field: str) -> bool:
     return any(field.startswith(p) for p in _SIGNAL_PREFIXES)
+
+
+_REGIME_STATE_CACHE: dict[str, Any] = {}
+
+
+def latest_regime_state(data_dir) -> str | None:
+    """读最新市场环境 state (按日缓存; regime 每日盘后更新)。"""
+    import datetime as _dt2
+    key = _dt2.date.today().isoformat()
+    hit = _REGIME_STATE_CACHE.get("v")
+    if hit is not None and hit[0] == key:
+        return hit[1]
+    try:
+        path = Path(data_dir) / "regime_history" / "part.parquet"
+        if not path.exists():
+            return None
+        df = pl.scan_parquet(path).select(["date", "state"]).sort("date").tail(1).collect()
+        state = str(df["state"][0]) if df.height else None
+        _REGIME_STATE_CACHE["v"] = (key, state)
+        return state
+    except Exception:
+        return None
 
 
 def _build_condition_mask(df: pl.DataFrame, conditions: list[dict], logic: str) -> pl.DataFrame:
@@ -1094,6 +1117,14 @@ class MonitorRuleEngine:
         if not sid:
             return []
         at = rule.get("asset_type", "stock")
+
+        # 环境闸门: 规则要求最新市场环境在指定状态集合内才放行信号
+        # (回测验证: oversold_bounce ETF 加 strong 闸门, 回撤 -64%→-22%)
+        gate = rule.get("regime_states") or None
+        if gate:
+            cur = latest_regime_state(self._data_dir) if self._data_dir else None
+            if cur is None or str(cur) not in set(str(x) for x in gate):
+                return []
         pool_key = (str(rule.get("id", sid)), sid, at)
         try:
             s = self._strategy_engine.get(sid)

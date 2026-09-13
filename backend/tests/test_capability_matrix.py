@@ -21,6 +21,31 @@ DEFAULT_CURRENT = {
     "depth5_data_provider": "tickflow",
     "realtime_data_provider": "tickflow",
     "financial_data_provider": "tickflow",
+    "news_data_provider": "tickflow",
+    "dragon_tiger_data_provider": "tickflow",
+    "limit_updown_data_provider": "tickflow",
+    "market_overview_data_provider": "tickflow",
+    "consensus_data_provider": "tickflow",
+    "sector_data_provider": "tickflow",
+    "hot_list_data_provider": "tickflow",
+    "anomaly_data_provider": "tickflow",
+    "auction_data_provider": "tickflow",
+    "money_flow_data_provider": "tickflow",
+    "margin_data_provider": "tickflow",
+    "block_trade_data_provider": "tickflow",
+    "chip_data_provider": "tickflow",
+    "corp_events_data_provider": "tickflow",
+    "research_data_provider": "tickflow",
+    "announcements_data_provider": "tickflow",
+    "macro_data_provider": "tickflow",
+    "options_data_provider": "tickflow",
+    "valuation_data_provider": "tickflow",
+    "kzz_data_provider": "tickflow",
+    "ipo_data_provider": "tickflow",
+    "survey_data_provider": "tickflow",
+    "pledge_data_provider": "tickflow",
+    "score_data_provider": "tickflow",
+    "fund_data_provider": "tickflow",
 }
 
 
@@ -41,6 +66,11 @@ def test_registry_covers_all_routing_fields():
     assert len(set(routable)) == len(routable)
     assert {c["id"] for c in CAPABILITY_REGISTRY} == {
         "realtime", "daily", "minute", "full_minute", "depth5", "adj_factor", "financial",
+        "news", "dragon_tiger", "limit_updown", "market_overview", "consensus", "sector",
+        "hot_list", "anomaly", "auction", "money_flow",
+        "margin", "block_trade", "chip", "corp_events",
+        "research", "announcements", "macro", "options",
+        "valuation", "kzz", "ipo", "survey", "pledge", "score", "fund",
     }
     full_minute = next(c for c in CAPABILITY_REGISTRY if c["id"] == "full_minute")
     assert full_minute["field"] == "full_minute_data_provider"
@@ -56,7 +86,7 @@ def test_matrix_without_third_party_sources(monkeypatch):
     _fake_sources(monkeypatch, [])
     matrix = build_capability_matrix(dict(DEFAULT_CURRENT), tickflow_tier="expert")
     assert matrix["tickflow_tier"] == "expert"
-    assert len(matrix["capabilities"]) == 7
+    assert len(matrix["capabilities"]) == 32
     for cap in matrix["capabilities"]:
         names = [c["name"] for c in cap["candidates"]]
         assert names == ["tickflow"]

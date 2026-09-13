@@ -44,31 +44,50 @@ def _flatten_instruments(items: list[dict]) -> list[dict]:
 
 
 def _fetch_instruments_via_provider() -> list[dict] | None:
-    """若当前日K数据源不是 tickflow 且该 provider 提供 get_instruments, 用它拉标的维表。
+    """拉标的维表: 优先日K路由源, 其无 get_instruments(或失败)时按候选链找可用源。
 
-    返回 flatten 行列表; 未命中(仍应走 tickflow)时返回 None。
-    标的维表跟随日K数据源(二者天然耦合, 无独立偏好项)。
+    候选链(本地优先): tdx_quant → eastmoney_astock → mootdx → fuyao。
+    全部未命中(仍应走 tickflow)时返回 None。
+    标的维表跟随日K数据源(二者天然耦合, 无独立偏好项), 但日K源(如 tdx_local 读
+    vipdoc 文件)未必能供维表 — 此时不得静默降级到 TickFlow free(其列表无名且含杂类)。
     """
     from app.services import preferences
-
-    provider_name = preferences.get_daily_data_provider()
-    if provider_name == "tickflow":
-        return None
     from app.data_providers import custom as custom_sources
 
-    if not custom_sources.is_custom_provider(provider_name):
-        return None
-    provider = custom_sources.get_provider(provider_name)
-    if not hasattr(provider, "get_instruments"):
-        return None
-    try:
-        items = provider.get_instruments("stock") or []
-    except Exception as e:  # noqa: BLE001
-        logger.warning("provider %s get_instruments 失败: %s", provider_name, e)
-        return None
-    rows = _flatten_instruments(items)
-    logger.info("instruments via %s: %d stocks", provider_name, len(rows))
-    return rows
+    provider_name = preferences.get_daily_data_provider()
+    candidates: list[str] = []
+    if provider_name != "tickflow" and custom_sources.is_custom_provider(provider_name):
+        candidates.append(provider_name)
+    candidates += ["tdx_quant", "eastmoney_astock", "mootdx", "fuyao"]
+
+    for name in candidates:
+        provider = custom_sources.get_provider(name)
+        if provider is None or not hasattr(provider, "get_instruments"):
+            continue
+        try:
+            items = provider.get_instruments("stock")
+        except Exception as e:  # noqa: BLE001
+            logger.warning("provider %s get_instruments 失败: %s", name, e)
+            continue
+        if items is None:
+            continue
+        if hasattr(items, "to_dicts"):  # polars DataFrame → list[dict]
+            items = items.to_dicts()
+        if not items:
+            continue
+        rows = _flatten_instruments(items)
+        if rows:
+            # 质检: 名称覆盖率过低(如 tdx_local 读 .day 文件, 无名称) → 视为不合格, 换下一源
+            named = sum(1 for r in rows if str(r.get("name") or "").strip())
+            if len(rows) >= 100 and named < len(rows) * 0.5:
+                logger.warning(
+                    "provider %s get_instruments 名称覆盖率过低(%d/%d), 跳过换下一候选源",
+                    name, named, len(rows),
+                )
+                continue
+            logger.info("instruments via %s: %d stocks", name, len(rows))
+            return rows
+    return None
 
 
 def sync_instruments(data_dir: Path) -> int:
@@ -96,7 +115,35 @@ def sync_instruments(data_dir: Path) -> int:
     df = pl.DataFrame(all_rows)
     df = df.with_columns(pl.lit(date.today()).alias("as_of"))
 
+    # 合并保留: 新源缺失的扩展列(float_shares/limit_up/limit_down/total_shares/name)
+    # 从现有维表继承, 防止换源同步把回填过的估值/涨跌停数据清零
     out = data_dir / "instruments" / "instruments.parquet"
+    if out.exists() and not df.is_empty():
+        try:
+            existing = pl.read_parquet(out)
+            inherit = [c for c in ("float_shares", "total_shares", "limit_up", "limit_down", "name")
+                       if c in existing.columns]
+            for c in inherit:
+                if c not in df.columns:
+                    continue
+                old_map = dict(zip(existing["symbol"].to_list(), existing[c].to_list()))
+                vals = []
+                for sym in df["symbol"].to_list():
+                    v = df[c][df["symbol"].to_list().index(sym)] if c in df.columns else None
+                    vals.append(v)
+                # 新值全空/缺失时用旧值补
+                col_vals = df[c].to_list() if c in df.columns else [None] * df.height
+                merged = []
+                old_by_sym = dict(zip(existing["symbol"].to_list(), existing[c].to_list()))
+                for sym, v in zip(df["symbol"].to_list(), col_vals):
+                    if v is None or v == "" or v == 0:
+                        merged.append(old_by_sym.get(sym))
+                    else:
+                        merged.append(v)
+                df = df.with_columns(pl.Series(c, merged))
+        except Exception as e:
+            logger.warning("instruments 合并保留旧扩展列失败(忽略): %s", e)
+
     out.parent.mkdir(parents=True, exist_ok=True)
     df.write_parquet(out)
 

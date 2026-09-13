@@ -1,0 +1,43 @@
+# TSP built-in Sina Finance options plugin — 按上游拆分自 astock_ext。
+# 上游: hq.sinajs.cn / stock.finance.sina.com.cn (新浪财经)。
+name: sina_ext
+display_name: "新浪财经"
+runtime: none
+entry: app.plugins.sina_ext.provider:SinaExtProvider
+check: app.plugins.sina_ext.provider:availability
+datasets: [options, money_flow, news, daily, minute, realtime]
+description: "新浪财经：ETF 期权三件套、个股日度资金流(新浪口径)、7×24 滚播、日K/分钟K(getKLineData 不复权 ≤800根)、全市场实时快照(hq.sinajs 批量)。全部公开接口无需 Key。"
+homepage: "https://stock.finance.sina.com.cn/"
+inventory:
+  - dataset: options
+    name: "期权合约月份"
+    desc: "ETF 期权按月份的合约代码清单（50ETF/300ETF/科创50ETF/500ETF, 认购/认沽）"
+    upstream: "新浪 StockOptionService.getStockName + hq.sinajs.cn OP_UP_/OP_DOWN_"
+  - dataset: options
+    name: "T 型报价"
+    desc: "单合约买卖五档/最新价/行权价/持仓量/成交量/涨跌幅"
+    upstream: "新浪 hq.sinajs.cn/list=CON_OP_{code}"
+  - dataset: options
+    name: "希腊字母"
+    desc: "单合约 Delta/Gamma/Theta/Vega/隐含波动率/理论价"
+    upstream: "新浪 hq.sinajs.cn/list=CON_SO_{code}"
+  - dataset: money_flow
+    name: "个股日度资金流（新浪口径）"
+    desc: "四档单净额 r0/r3/r5/r10_net + 收盘/换手/净流入占比"
+    upstream: "新浪 MoneyFlow.ssl_qsfx_zjlrqs"
+  - dataset: news
+    name: "7×24 滚播快讯"
+    desc: "新浪财经直播滚播：标题/正文/时间，ext.stocks 带个股关联"
+    upstream: "新浪 zhibo.sina.com.cn/api/zhibo/feed?zhibo_id=152"
+  - dataset: daily
+    name: "日K（不复权）"
+    desc: "getKLineData scale=240，≤800根，volume 股→手，无成交额"
+    upstream: "新浪 CN_MarketDataService.getKLineData"
+  - dataset: minute
+    name: "分钟K"
+    desc: "getKLineData scale=5/15/30/60，≤800根"
+    upstream: "新浪 CN_MarketDataService.getKLineData"
+  - dataset: realtime
+    name: "全市场实时快照"
+    desc: "开/昨收/最新/高低/量(股→手)/额，批量≤80只/次（标的集取自 instruments 维表）"
+    upstream: "新浪 hq.sinajs.cn/list="

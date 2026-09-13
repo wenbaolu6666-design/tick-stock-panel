@@ -1,0 +1,15 @@
+# TSP built-in HKEX northbound plugin — 港交所官方北向日统计。
+# 上游: www.hkex.com.hk/chi/csm/DailyStat/data_tab_daily_{YYYYMMDD}c.js (TLS 间歇不稳, 已关校验)。
+name: hkex_ext
+display_name: "HKEX 北向日统计"
+runtime: none
+entry: app.plugins.hkex_ext.provider:HkexExtProvider
+check: app.plugins.hkex_ext.provider:availability
+datasets: [money_flow]
+description: "港交所官方北向日统计：成交总额/额度余额/十大成交活跃股（内容透传 raw 列）。sgt 口径收紧后最权威的北向日度来源；TLS 握手间歇失败已容忍重试。"
+homepage: "https://www.hkex.com.hk/?sc_lang=zh-HK"
+inventory:
+  - dataset: money_flow
+    name: "北向日统计（HKEX 权威口径）"
+    desc: "SSE/SZSE Northbound 成交总额/额度余额/十大成交活跃股（market 区分沪/深）"
+    upstream: "HKEX www.hkex.com.hk/chi/csm/DailyStat/data_tab_daily_{date}c.js"

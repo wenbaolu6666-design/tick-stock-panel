@@ -1,0 +1,64 @@
+# TSP built-in Eastmoney (东方财富) special data plugin — 按上游拆分:
+# 本插件只含东财系接口 (push2 / datacenter / reportapi / mobappconfig) + 本地筹码推演。
+# 同花顺网页/巨潮/新浪期权/官方宏观/财联社已拆至 ths_basic / cninfo_ext / sina_ext / macro_gov / cls_ext。
+name: astock_ext
+display_name: "东方财富数据"
+runtime: none
+entry: app.plugins.astock_ext.provider:AstockExtProvider
+check: app.plugins.astock_ext.provider:availability
+datasets: [money_flow, news, margin, block_trade, corp_events, research, dragon_tiger, anomaly, limit_updown, hot_list, sector, financial]
+description: "东方财富系数据：主力资金流(分钟/日)、东财 7x24 快讯、融资融券、大宗交易、公司事件(解禁/分红/股东户数)、个股研报、龙虎榜席位明细/整榜、日内异动池、涨停四池、人气榜、板块资金流、F10 报表。全部公开接口无需 Key。（筹码分布已拆至 chip_local 本地推演插件）"
+homepage: "https://data.eastmoney.com/"
+inventory:
+  - dataset: money_flow
+    name: "主力资金流（分钟/日）"
+    desc: "当日分钟级 + 日级历史：主力/超大单/大单/中单/小单净流入（元）"
+    upstream: "东财 push2 / push2his fflow kline"
+  - dataset: news
+    name: "东财 7x24 快讯"
+    desc: "市场级滚动快讯流，含相关股票代码"
+    upstream: "东财 np-weblist.eastmoney.com getFastNewsList"
+  - dataset: margin
+    name: "融资融券明细"
+    desc: "日级：融资余额/买入/偿还、融券余额/卖出、两融余额"
+    upstream: "东财 datacenter RPTA_WEB_RZRQ_GGMX"
+  - dataset: block_trade
+    name: "大宗交易记录"
+    desc: "成交价/量/额、买卖营业部、折溢价率"
+    upstream: "东财 datacenter RPT_DATA_BLOCKTRADE"
+  - dataset: corp_events
+    name: "公司事件日历"
+    desc: "限售解禁 / 分红送转 / 股东户数（kind 列区分）"
+    upstream: "东财 datacenter RPT_LIFT_STAGE / RPT_SHAREBONUS_DET / RPT_HOLDERNUMLATEST"
+  - dataset: research
+    name: "个股研报"
+    desc: "标题/机构/评级/盈利预测 EPS（待修: 需补 beginTime 参数）"
+    upstream: "东财 reportapi.eastmoney.com/report/list"
+  - dataset: dragon_tiger
+    name: "龙虎榜席位明细"
+    desc: "上榜记录 + 买卖前五席位（kind 列区分 record/buy_seat/sell_seat）"
+    upstream: "东财 datacenter RPT_DAILYBILLBOARD_DETAILSNEW / RPT_BILLBOARD_DAILYDETAILS*"
+  - dataset: anomaly
+    name: "日内异动池"
+    desc: "严重异常波动股票池（待修: 缺 version=9001 参数）"
+    upstream: "东财 dycalchis.eastmoney.com/price-anomaly/list"
+  - dataset: limit_updown
+    name: "涨停/炸板/跌停/昨日涨停四池"
+    desc: "连板数/几天几板/封板资金/首末封板时间/炸板次数/行业（上游仅最新交易日完整）"
+    upstream: "东财 push2ex getTopicZTPool / ZBPool / DTPool / getYesterdayZTPool"
+  - dataset: hot_list
+    name: "东财人气榜"
+    desc: "TOP50 人气排名/排名变化，push2 ulist 补名称价格"
+    upstream: "东财 emappdata getAllCurrentList (POST)"
+  - dataset: dragon_tiger
+    name: "全市场龙虎榜整榜"
+    desc: "按日全市场上榜股：原因/收盘/涨跌幅/净买额/买卖额/换手（净买额降序）"
+    upstream: "东财 datacenter RPT_DAILYBILLBOARD_DETAILSNEW (按日)"
+  - dataset: sector
+    name: "板块资金流"
+    desc: "行业/概念/地域 × 今日/5日/10日：主力净流入/净占比 + 超大/大/中/小单"
+    upstream: "东财 push2 clist/get (t:2/t:3/t:1, f62/f184/f164 系)"
+  - dataset: financial
+    name: "F10 三大报表/主要指标"
+    desc: "资产负债/利润/现金流/主要指标（按报告期, F10 口径）"
+    upstream: "东财 datacenter.eastmoney.com/securities RPT_F10_FINANCE_G* (source=F10)"

@@ -922,15 +922,21 @@ def get_minute(
         need_fallback = today.weekday() >= 5  # 周六/周日必非交易日
         if not need_fallback:
             now_cn = cn_now()
+            # 盘前 (9:30 前) 当日必无分时; 盘后 (15:30 后) 当日日线可能未同步。
+            # 两者都回退到最近有数据的交易日, 否则凌晨/清晨打开分时图一片空白。
+            before_open = now_cn.hour < 9 or (now_cn.hour == 9 and now_cn.minute < 30)
             after_close = now_cn.hour > 15 or (now_cn.hour == 15 and now_cn.minute >= 30)
-            if after_close:
+            if before_open or after_close:
                 latest_daily = repo.latest_daily_date()
                 if latest_daily is None or latest_daily < today:
                     need_fallback = True
         if need_fallback:
             recent = repo.latest_minute_date(symbol, asset_type=asset_type)
-            if recent is None:
-                recent = repo.latest_daily_date()
+            latest_daily = repo.latest_daily_date()
+            # 分钟库可能滞后于日线 (如通达信盘后分钟下载未开): 取两者较晚者,
+            # 该日本地分钟缺数据时由 fetch_minute_single 回退链实时补拉
+            if latest_daily is not None and (recent is None or latest_daily > recent):
+                recent = latest_daily
             trade_date = recent if recent is not None else today
         else:
             trade_date = today

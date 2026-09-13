@@ -783,12 +783,22 @@ def ingest_data(request: Request, config_id: str, body: IngestReq):
     if not config:
         raise HTTPException(404, f"配置 '{config_id}' 不存在")
 
-    # 校验必填字段
+    # 校验必填字段: 排除 symbol/code (apply_config_mapping 会自动派生),
+    # 以及被 symbol_map/code_map 映射生成的列 —— 否则用户按真实字段提交时
+    # 会被误判"缺少 code 字段"而拒绝 (computed 列不该强制每行自带)。
     configured = {f.name for f in config.fields}
-    required = configured - {"symbol"}
+    auto_cols = {"symbol", "code"}
+    sm = config.symbol_map or {}
+    cm = config.code_map or {}
+    if sm.get("type") == "mapped" and sm.get("col"):
+        auto_cols.add(sm["col"])
+    if cm.get("type") == "mapped" and cm.get("col"):
+        auto_cols.add(cm["col"])
+    required = configured - auto_cols
     for i, row in enumerate(body.rows):
-        if "symbol" not in row:
-            raise HTTPException(400, f"第 {i + 1} 行缺少 symbol 字段")
+        # symbol 可由 code_map 反查, 故只要求行里至少有 symbol 或 code 之一
+        if "symbol" not in row and "code" not in row and not (auto_cols & set(row.keys())):
+            raise HTTPException(400, f"第 {i + 1} 行缺少 symbol 或映射列字段")
         missing = required - set(row.keys())
         if missing:
             raise HTTPException(400, f"第 {i + 1} 行缺少字段: {', '.join(sorted(missing))}")

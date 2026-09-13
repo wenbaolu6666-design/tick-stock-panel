@@ -409,6 +409,8 @@ class MinuteSyncPrefs(BaseModel):
 
 
 class DataProvidersIn(BaseModel):
+    # 路由偏好写入白名单: 必须与 capabilities.py CAPABILITY_REGISTRY 的 field 一一对应
+    # (扩展能力此前缺失, UI 路由切换会被 pydantic 静默丢弃)
     daily_data_provider: str | None = None
     adj_factor_provider: str | None = None
     minute_data_provider: str | None = None
@@ -416,6 +418,31 @@ class DataProvidersIn(BaseModel):
     depth5_data_provider: str | None = None
     realtime_data_provider: str | None = None
     financial_data_provider: str | None = None
+    news_data_provider: str | None = None
+    dragon_tiger_data_provider: str | None = None
+    limit_updown_data_provider: str | None = None
+    market_overview_data_provider: str | None = None
+    consensus_data_provider: str | None = None
+    sector_data_provider: str | None = None
+    hot_list_data_provider: str | None = None
+    anomaly_data_provider: str | None = None
+    auction_data_provider: str | None = None
+    money_flow_data_provider: str | None = None
+    margin_data_provider: str | None = None
+    block_trade_data_provider: str | None = None
+    chip_data_provider: str | None = None
+    corp_events_data_provider: str | None = None
+    research_data_provider: str | None = None
+    announcements_data_provider: str | None = None
+    macro_data_provider: str | None = None
+    options_data_provider: str | None = None
+    valuation_data_provider: str | None = None
+    kzz_data_provider: str | None = None
+    ipo_data_provider: str | None = None
+    survey_data_provider: str | None = None
+    pledge_data_provider: str | None = None
+    score_data_provider: str | None = None
+    fund_data_provider: str | None = None
 
 
 class PluginKeyIn(BaseModel):
@@ -561,13 +588,37 @@ def get_preferences() -> dict:
 def list_data_sources() -> dict:
     """列出已加载的数据源 (内置 / 插件 / 用户自定义)。"""
     from app.data_providers import custom as custom_sources
+    from app.services import preferences
+    disabled = set(preferences.get_disabled_sources())
+    plugins = custom_sources.list_plugins()
+    for p in plugins:
+        p["enabled"] = p["name"] not in disabled
     return {
         "builtin": [{"name": "tickflow", "display_name": "TickFlow", "datasets": ["daily", "adj_factor", "realtime", "minute"]}],
-        "plugins": custom_sources.list_plugins(),
+        "plugins": plugins,
         "custom": custom_sources.list_sources(),
         "errors": custom_sources.errors(),
         "config_dir": str(custom_sources.data_sources_dir()),
     }
+
+
+class PluginToggleIn(BaseModel):
+    plugin: str
+    enabled: bool
+
+
+@router.post("/plugin-toggle")
+def toggle_plugin(req: PluginToggleIn, request: Request) -> dict:
+    """启用/停用数据源: 停用后从能力路由候选移除 (当前正被路由的源会显示不可用, 请改路由)。"""
+    from app.services import preferences
+    disabled = set(preferences.get_disabled_sources())
+    if req.enabled:
+        disabled.discard(req.plugin)
+    else:
+        disabled.add(req.plugin)
+    preferences.save({"disabled_sources": sorted(disabled)})
+    request.app.state.capabilities = detect_capabilities()
+    return {"plugin": req.plugin, "enabled": req.enabled}
 
 
 @router.get("/capability-matrix")
@@ -590,6 +641,32 @@ def get_capability_matrix() -> dict:
             "depth5_data_provider": preferences.get_depth5_data_provider(),
             "adj_factor_provider": preferences.get_adj_factor_provider(),
             "financial_data_provider": preferences.get_financial_provider(),
+            "full_minute_data_provider": preferences.get_full_minute_data_provider(),
+            "news_data_provider": preferences.get_news_data_provider(),
+            "dragon_tiger_data_provider": preferences.get_dragon_tiger_data_provider(),
+            "limit_updown_data_provider": preferences.get_limit_updown_data_provider(),
+            "market_overview_data_provider": preferences.get_market_overview_data_provider(),
+            "consensus_data_provider": preferences.get_consensus_data_provider(),
+            "sector_data_provider": preferences.get_sector_data_provider(),
+            "hot_list_data_provider": preferences.get_hot_list_data_provider(),
+            "anomaly_data_provider": preferences.get_anomaly_data_provider(),
+            "auction_data_provider": preferences.get_auction_data_provider(),
+            "money_flow_data_provider": preferences.get_money_flow_data_provider(),
+            "margin_data_provider": preferences.get_margin_data_provider(),
+            "block_trade_data_provider": preferences.get_block_trade_data_provider(),
+            "chip_data_provider": preferences.get_chip_data_provider(),
+            "corp_events_data_provider": preferences.get_corp_events_data_provider(),
+            "research_data_provider": preferences.get_research_data_provider(),
+            "announcements_data_provider": preferences.get_announcements_data_provider(),
+            "macro_data_provider": preferences.get_macro_data_provider(),
+            "options_data_provider": preferences.get_options_data_provider(),
+            "valuation_data_provider": preferences.get_valuation_data_provider(),
+            "kzz_data_provider": preferences.get_kzz_data_provider(),
+            "ipo_data_provider": preferences.get_ipo_data_provider(),
+            "survey_data_provider": preferences.get_survey_data_provider(),
+            "pledge_data_provider": preferences.get_pledge_data_provider(),
+            "score_data_provider": preferences.get_score_data_provider(),
+            "fund_data_provider": preferences.get_fund_data_provider(),
         },
         tickflow_tier=policy.base_tier_name(),
     )

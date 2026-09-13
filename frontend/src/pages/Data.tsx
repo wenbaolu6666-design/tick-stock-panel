@@ -885,6 +885,11 @@ export function Data() {
                 { label: 'Enriched', files: s?.storage.enriched_files,    size: s?.storage.enriched_size_mb },
                 { label: '分钟 K',   files: s?.storage.minute_files,      size: s?.storage.minute_size_mb },
                 { label: '财务数据', files: s?.storage.financials_files,   size: s?.storage.financials_size_mb },
+                { label: '指数日 K', files: s?.storage.index_daily_files,  size: s?.storage.index_daily_size_mb },
+                { label: '指数Enriched', files: s?.storage.index_enriched_files, size: s?.storage.index_enriched_size_mb },
+                { label: 'ETF 日 K', files: s?.storage.etf_daily_files,    size: s?.storage.etf_daily_size_mb },
+                { label: 'ETF Enriched', files: s?.storage.etf_enriched_files, size: s?.storage.etf_enriched_size_mb },
+                { label: 'ETF 维表', files: s?.storage.etf_instruments_files, size: s?.storage.etf_instruments_size_mb },
               ].map((item) => (
                 <div key={item.label} className="flex items-center justify-between text-[11px]">
                   <span className="text-muted">{item.label}</span>

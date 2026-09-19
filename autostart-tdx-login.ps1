@@ -148,10 +148,22 @@ while ((Get-Date) -lt $deadline) {
         $kids = Get-ChildControls $w.hwnd
         $btns = @($kids | Where-Object { $_.class -eq 'Button' -and $_.text -match '确定|确认|关闭|^是|是\(|Yes|OK|^否|否\(|No' })
         if ($btns.Count -eq 0) { continue }
-        # 冲突对话框: 已有主窗口 = 真第二实例 → 点"否"放弃; 无主窗口 = 残留锁/首启 → 点"是"放行
+        # 冲突对话框三按钮语义(实测确认):
+        #   是(Y)=继续运行并关闭之前的实例 / 否(N)=两实例并存(冲突!) / 取消=结束本次运行
+        # 已有主窗口 = 第二实例 → 点"取消"让本实例退出(绝不点"否");
+        # 无主窗口 = 残留锁/首启 → 点"是"放行(接管清理残留)。
         $mainExists = Test-MainFrame
         $pick = $null
-        if ($mainExists) { $pick = $btns | Where-Object { $_.text -match '^否|否\(|^No' } | Select-Object -First 1 }
+        if ($mainExists) {
+            $pick = $btns | Where-Object { $_.text -match '^取消|^Cancel' } | Select-Object -First 1
+            if (-not $pick) {
+                # 没找到"取消"按钮: WM_CLOSE 等价于 X/取消
+                [void][TdxAuto]::PostMessage($w.hwnd, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)
+                Log ("dialog '{0}' -> WM_CLOSE (mainExists=True, 放弃第二实例)" -f $w.title)
+                Start-Sleep -Seconds 2
+                continue
+            }
+        }
         if (-not $pick) { $pick = $btns | Where-Object { $_.text -match '确定|确认|关闭|^是|是\(|Yes|OK' } | Select-Object -First 1 }
         if ($pick) {
             [void][TdxAuto]::PostMessage($pick.hwnd, 0x00F5, [IntPtr]::Zero, [IntPtr]::Zero)
@@ -161,7 +173,7 @@ while ((Get-Date) -lt $deadline) {
                 [void][TdxAuto]::PostMessage($w.hwnd, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)
                 Log ("dialog '{0}' → BM_CLICK[{1}] 无效, WM_CLOSE (mainExists={2})" -f $w.title, $pick.text, $mainExists)
             } else {
-                Log ("dialog '{0}' → 点击[{1}] (mainExists={2})" -f $w.title, $pick.text, $mainExists)
+                Log ("dialog '{0}' -> 点击[{1}] (mainExists={2})" -f $w.title, $pick.text, $mainExists)
             }
             Start-Sleep -Seconds 2
         }
@@ -176,7 +188,7 @@ while ((Get-Date) -lt $deadline) {
         if ($tab -and $btn) {
             $sel = [int][TdxAuto]::SendMessage($tab.hwnd, 0x130B, [IntPtr]::Zero, [IntPtr]::Zero)
             if ($sel -ne 1) {
-                if ($tabClicks -lt 6) {
+                if ($tabClicks -lt 12) {
                     [void][TdxAuto]::SetForegroundWindow($login.hwnd)
                     Start-Sleep -Milliseconds 300
                     $cx = [int]($tab.x + $tab.w * 0.75)
@@ -186,7 +198,7 @@ while ((Get-Date) -lt $deadline) {
                     Log ("guest tab click #{0}" -f $tabClicks)
                     Start-Sleep -Seconds 2
                 }
-            } elseif ($loginClicks -lt 8) {
+            } elseif ($loginClicks -lt 12) {
                 # 已在游客页: 网络就绪才点登录, 否则等待 (避免登录失败→错误弹窗反复)
                 if (Test-Net) {
                     [void][TdxAuto]::PostMessage($btn.hwnd, 0x00F5, [IntPtr]::Zero, [IntPtr]::Zero)

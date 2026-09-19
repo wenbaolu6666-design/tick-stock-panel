@@ -3,7 +3,31 @@
 > 维护约定:每次改动自启动链/数据源栈后更新本文件。
 > 最后更新:2026-09-19(v7,修复通达信启动链)
 
-## 通达信自启动链(当前 v7)
+## 通达信自启动链(当前 v7 + autostart-all v3 全静默)
+
+### 启动链(2026-09-19 伪重启实测 60 秒全栈恢复)
+- 计划任务 `TSP-AutoStart`(AtLogOn, principal=PAUL\WenPaul, Interactive)
+  → Action: `wscript.exe autostart-silent.vbs`(UTF-16 编码, 隐藏窗口零闪现)
+  → `powershell autostart-all.ps1`(v3, 互斥锁 `TSP-AutoStart-All`, 打点日志 `logs/autostart-all.log`)
+  1. 启动 `E:	dx	dxw.exe`(已跑则跳过)
+  2. 静默拉起 `autostart-tdx-login.ps1`(v7, CreateNoWindow)
+  3. **等 TQ 17709 上线(最多 5 分钟)—— 必须在 backend 之前**: backend 启动时 daily_pipeline
+     立即用 tdx_quant provider 同步 instruments, TQ 未上 → ValueError → backend 启动失败
+  4. 后端 3018(cmd /c CreateNoWindow + 日志重定向; 40s 未监听自动重试一次 — 兜 duckdb 启动竞态)
+  5. 前端 3011(Start-Process node -WindowStyle Hidden; **cmd /c 间接启动 node 实测失败**)
+  6. POST `/api/settings/data-sources/reload`
+- v7 冲突框语义(按官方弹窗文本): 是(Y)=接管杀旧实例 / **否(N)=两实例并存(冲突, 绝不点)** / 取消=结束本次运行
+  → 已有主窗口(mainExists=True)时点「取消」; 无主窗口(残留锁)点「是」放行
+- v7 点击上限: tab 12 次 / login 12 次
+
+### 排障备忘(2026-09-19 伪重启会话踩坑)
+- 计划任务注册脚本含中文路径必须 UTF-8 BOM, 否则任务 XML 路径乱码(閲忓寲鐐掕偂)→ LastResult=0xFFFD0000 脚本不执行
+- Python heredoc 写 PowerShell 路径: `
+`/``/`` 会被 Python 转义成控制字符写进 ps1(用 chr(92) 拼)
+- 任务实例挂起(如 powershell -File 报错等待输入)会持互斥锁 → 后续触发被 IgnoreNew 静默忽略
+  → 先 `Stop-ScheduledTask` + 杀 powershell/wscript 实例再触发
+
+### 端到端实测(2026-09-19 18:37)
 
 ### 启动链
 - 计划任务 `TSP-AutoStart`(AtLogOn)→ `autostart-all.ps1`(互斥锁 `TSP-AutoStart-All` 防重叠)

@@ -4,6 +4,11 @@
 
 $ErrorActionPreference = 'SilentlyContinue'
 
+# 单实例互斥锁: 计划任务与手动运行重叠时, 后到者直接退出 (修复"重复启动")
+$mutexCreated = $false
+$mutex = New-Object System.Threading.Mutex($true, 'TSP-AutoStart-All', [ref]$mutexCreated)
+if (-not $mutexCreated) { exit 0 }
+
 $root = 'E:\WenPaul\Documents\量化炒股\tick-stock-panel'
 
 $py = 'C:\Users\WenPaul\AppData\Roaming\uv\python\cpython-3.12.14-windows-x86_64-none\python.exe'
@@ -21,6 +26,10 @@ New-Item -ItemType Directory -Force -Path $log | Out-Null
 if (-not (Get-Process tdxw -ErrorAction SilentlyContinue)) {
 
     Start-Process -FilePath 'E:\tdx\tdxw.exe' -WorkingDirectory 'E:\tdx'
+
+    # 等 TdxW 进程真正出现在进程表 (避免后端 tdx_quant 探测时误判未启动而二次拉起)
+    $wdx = (Get-Date).AddSeconds(15)
+    while ((Get-Date) -lt $wdx -and -not (Get-Process tdxw -ErrorAction SilentlyContinue)) { Start-Sleep -Milliseconds 500 }
 
 }
 

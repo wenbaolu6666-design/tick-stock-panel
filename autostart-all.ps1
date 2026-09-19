@@ -72,14 +72,14 @@ LogAll "step3 check backend 3018"
 $listen = netstat -ano | Select-String ':3018\s.*LISTENING'
 if (-not $listen) {
     Start-Silent $backendDir $py '-m uvicorn app.main:app --host 127.0.0.1 --port 3018' (Join-Path $log 'backend.out.log') (Join-Path $log 'backend.err.log')
-    LogAll "step3 wait backend listen 3018 (max 40s)"
-    $bdead = (Get-Date).AddSeconds(40)
+    LogAll "step3 wait backend listen 3018 (max 90s)"
+    $bdead = (Get-Date).AddSeconds(90)
     while ((Get-Date) -lt $bdead -and -not (netstat -ano | Select-String ':3018\s.*LISTENING')) { Start-Sleep -Seconds 2 }
     if (-not (netstat -ano | Select-String ':3018\s.*LISTENING')) {
-        LogAll "step3 backend NOT listening in 40s -> retry once"
+        LogAll "step3 backend NOT listening in 90s -> retry once"
         Get-CimInstance Win32_Process -Filter "Name='python.exe'" | Where-Object { $_.CommandLine -match 'uvicorn' -and $_.CommandLine -match '3018' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
         Start-Silent $backendDir $py '-m uvicorn app.main:app --host 127.0.0.1 --port 3018' (Join-Path $log 'backend.out.log') (Join-Path $log 'backend.err.log')
-        $bdead = (Get-Date).AddSeconds(40)
+        $bdead = (Get-Date).AddSeconds(90)
         while ((Get-Date) -lt $bdead -and -not (netstat -ano | Select-String ':3018\s.*LISTENING')) { Start-Sleep -Seconds 2 }
     }
 }

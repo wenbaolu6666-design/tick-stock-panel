@@ -24,8 +24,8 @@ from app.tickflow.rate_limits import chunked
 
 logger = logging.getLogger(__name__)
 
-# stock-sdk 支持的数据集(adj_factor 已下线: hfq/none 相除是漂移比率而非单事件除权因子, 曾污染因子库)
-_DATASETS = ("daily", "minute", "realtime")
+# stock-sdk 支持的数据集(financial 不支持 → 不声明, 自动回退 tickflow)
+_DATASETS = ("daily", "adj_factor", "minute", "realtime")
 
 # 每次桥接调用的符号数。桥接内部按 concurrency 并发, 分批仅为进度反馈与超时控制。
 _BATCH = 40

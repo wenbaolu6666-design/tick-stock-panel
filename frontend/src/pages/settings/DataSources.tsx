@@ -53,31 +53,6 @@ const DATASET_LABEL: Record<string, string> = {
   depth5: '五档',
   financial: '财务',
   full_minute: '全量分钟',
-  news: '新闻',
-  dragon_tiger: '龙虎榜',
-  limit_updown: '涨跌停',
-  market_overview: '市场总览',
-  consensus: '一致预期',
-  sector: '板块',
-  hot_list: '热榜',
-  anomaly: '异动',
-  auction: '竞价',
-  money_flow: '资金流',
-  margin: '两融',
-  block_trade: '大宗',
-  chip: '筹码',
-  corp_events: '公司事件',
-  research: '研报',
-  announcements: '公告',
-  macro: '宏观',
-  options: '期权',
-  valuation: '估值',
-  kzz: '可转债',
-  ipo: '新股',
-  survey: '调研',
-  pledge: '质押',
-  score: '评分',
-  fund: '基金',
 }
 
 /** 能力图标 (纯展示; 能力清单本身由后端注册表驱动) */
@@ -171,9 +146,6 @@ function patchMatrix(
   return { ...matrix, capabilities: caps }
 }
 
-/** TickFlow 面板显隐开关: 用户使用自有插件数据源, 第三方档位介绍卡默认隐藏 (改回 true 即恢复) */
-const SHOW_TICKFLOW_PANEL = false
-
 const DEFAULT_ROUTING: Record<ProviderField, string> = {
   daily_data_provider: 'tickflow',
   adj_factor_provider: 'tickflow',
@@ -182,31 +154,6 @@ const DEFAULT_ROUTING: Record<ProviderField, string> = {
   depth5_data_provider: 'tickflow',
   realtime_data_provider: 'tickflow',
   financial_data_provider: 'tickflow',
-  news_data_provider: 'tickflow',
-  dragon_tiger_data_provider: 'tickflow',
-  limit_updown_data_provider: 'tickflow',
-  market_overview_data_provider: 'tickflow',
-  consensus_data_provider: 'tickflow',
-  sector_data_provider: 'tickflow',
-  hot_list_data_provider: 'tickflow',
-  anomaly_data_provider: 'tickflow',
-  auction_data_provider: 'tickflow',
-  money_flow_data_provider: 'tickflow',
-  margin_data_provider: 'tickflow',
-  block_trade_data_provider: 'tickflow',
-  chip_data_provider: 'tickflow',
-  corp_events_data_provider: 'tickflow',
-  research_data_provider: 'tickflow',
-  announcements_data_provider: 'tickflow',
-  macro_data_provider: 'tickflow',
-  options_data_provider: 'tickflow',
-  valuation_data_provider: 'tickflow',
-  kzz_data_provider: 'tickflow',
-  ipo_data_provider: 'tickflow',
-  survey_data_provider: 'tickflow',
-  pledge_data_provider: 'tickflow',
-  score_data_provider: 'tickflow',
-  fund_data_provider: 'tickflow',
 }
 
 /** 单个能力卡: 当前生效提供方 + 候选切换标签。
@@ -637,7 +584,7 @@ export function SettingsDataSourcesPanel({ highlight }: { highlight?: string } =
   const prefs = usePreferences()
   const sources = useQuery({ queryKey: QK.dataSources, queryFn: api.dataSources })
   const matrix = useQuery({ queryKey: QK.capabilityMatrix, queryFn: api.capabilityMatrix })
-  const [selected, setSelected] = useState<string>('') // 当前在下方配置的源 name (空 = 未选中)
+  const [selected, setSelected] = useState<string>('tickflow') // 当前在下方配置的源 name
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
 
   const builtin: DataSourceItem[] = sources.data?.builtin ?? []
@@ -653,7 +600,7 @@ export function SettingsDataSourcesPanel({ highlight }: { highlight?: string } =
     ...builtin,
     ...pluginItems,
     ...customList,
-  ].filter(item => SHOW_TICKFLOW_PANEL || item.name !== 'tickflow')
+  ]
   const customNames = new Set(customList.map(c => c.name))
 
   const selectedCustom = customList.find(s => s.name === selected)
@@ -698,7 +645,7 @@ export function SettingsDataSourcesPanel({ highlight }: { highlight?: string } =
     mutationFn: (name: string) => api.deleteDataSource(name),
     onSuccess: () => {
       invalidateSources()
-      setSelected('')
+      setSelected('tickflow')
       setConfirmDelete(null)
       toast('数据源已删除', 'success')
     },
@@ -760,15 +707,6 @@ export function SettingsDataSourcesPanel({ highlight }: { highlight?: string } =
       }
     },
     onError: (e: Error) => toast(`卸载失败: ${e.message}`, 'error'),
-  })
-
-  const toggleMut = useMutation({
-    mutationFn: (v: { plugin: string; enabled: boolean }) => api.togglePlugin(v.plugin, v.enabled),
-    onSuccess: (_d, v) => {
-      invalidateSources()
-      toast(v.enabled ? `「${v.plugin}」已启用` : `「${v.plugin}」已停用（从能力路由候选移除）`, 'success')
-    },
-    onError: (e: Error) => toast(`启用/停用失败: ${e.message}`, 'error'),
   })
 
   // 插件 name → 状态 (供卡片渲染时判断 available/installing 等)
@@ -909,26 +847,9 @@ export function SettingsDataSourcesPanel({ highlight }: { highlight?: string } =
                       )
                     ) : (
                       <>
-                        {plugin && (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              toggleMut.mutate({ plugin: item.name, enabled: !(plugin.enabled ?? true) })
-                            }}
-                            disabled={toggleMut.isPending}
-                            className={`rounded px-1.5 py-0.5 text-[10px] font-medium transition-colors disabled:opacity-50 ${
-                              (plugin.enabled ?? true)
-                                ? 'bg-elevated/80 text-muted hover:text-foreground'
-                                : 'bg-warning/15 text-warning hover:bg-warning/25'
-                            }`}
-                            title={(plugin.enabled ?? true) ? '停用该数据源（从能力路由候选移除）' : '启用该数据源'}
-                          >
-                            {(plugin.enabled ?? true) ? '停用' : '启用'}
-                          </button>
-                        )}
                         <button
                           onClick={(e) => { e.stopPropagation(); switchProvider.mutate(item.name) }}
-                          disabled={switchProvider.isPending || (plugin ? plugin.enabled === false : false)}
+                          disabled={switchProvider.isPending}
                           className="rounded px-1.5 py-0.5 text-[10px] font-medium bg-accent/10 text-accent hover:bg-accent/20 transition-colors disabled:opacity-50"
                         >
                           套用
@@ -1000,7 +921,7 @@ export function SettingsDataSourcesPanel({ highlight }: { highlight?: string } =
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.15 }}
         >
-          {SHOW_TICKFLOW_PANEL && selected === 'tickflow' ? (
+          {selected === 'tickflow' ? (
             <TickFlowDetail active={servingDatasets('tickflow').length > 0} matrix={matrix.data} />
           ) : selected === '__new__' || customNames.has(selected) ? (
             selected === '__new__' ? (
@@ -1008,10 +929,10 @@ export function SettingsDataSourcesPanel({ highlight }: { highlight?: string } =
                 key={selected}
                 initial={null}
                 existingName={undefined}
-                onCancel={() => setSelected('')}
+                onCancel={() => setSelected('tickflow')}
                 onSaved={() => {
                   invalidateSources()
-                  setSelected('')
+                  setSelected('tickflow')
                 }}
                 activeName={activeName}
                 onActivate={(name) => switchProvider.mutate(name)}
@@ -1021,7 +942,7 @@ export function SettingsDataSourcesPanel({ highlight }: { highlight?: string } =
                 key={selected}
                 initial={null}
                 existingName={selected}
-                onCancel={() => setSelected('')}
+                onCancel={() => setSelected('tickflow')}
                 onSaved={() => {
                   invalidateSources()
                   // 强制清除该源的详情缓存, 下次编辑重新拉取最新配置
@@ -1132,41 +1053,34 @@ function PluginDetail({ plugin, isActive, matrixCaps, servingSet }: {
           )}
         </div>
 
-        {/* 数据溯源清单: 该源提供的全部数据项 × 上游出处 (manifest inventory) */}
+        {/* 能力适配表: 全部能力 × 该源适配状态 (样式对齐 TickFlow 能力档位表) */}
         <div className="min-w-0">
-          <div className="text-[10px] uppercase tracking-widest text-muted mb-1.5">数据清单 · 来自哪里</div>
           <div className="rounded-lg border border-border/60 bg-elevated/20 divide-y divide-border/50">
-            {(plugin.inventory ?? []).map((item, i) => {
-              const serving = item.dataset ? servingSet.has(item.dataset) : false
+            {matrixCaps.map(cap => {
+              const Icon = CAP_ICON[cap.id] ?? Database
+              const serving = servingSet.has(cap.id)
+              const declaredCap = declared.has(cap.id)
               return (
-                <div key={`${item.dataset}-${i}`} className="px-3 py-1.5">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className="text-xs text-foreground shrink-0">{item.name}</span>
-                    <span className="text-[9px] text-muted/50 rounded bg-elevated/70 px-1 py-px shrink-0">{DATASET_LABEL[item.dataset] || item.dataset}</span>
-                    {serving && (
-                      <span className="text-[9px] text-bear inline-flex items-center gap-0.5 shrink-0">
-                        <Check className="h-2.5 w-2.5" />服务中
-                      </span>
-                    )}
+                <div key={cap.id} className="flex items-center gap-2.5 px-3 py-1.5">
+                  <Icon className="h-3.5 w-3.5 text-secondary shrink-0" />
+                  <div className="flex-1 min-w-0 truncate">
+                    <span className="text-xs text-foreground">{cap.label}</span>
+                    <span className="ml-1.5 text-[10px] text-muted/60">{cap.desc}</span>
                   </div>
-                  {item.desc && <div className="text-[10px] text-muted/70 mt-0.5 leading-relaxed">{item.desc}</div>}
-                  {item.upstream && (
-                    <div className="text-[10px] text-secondary/80 mt-0.5 truncate" title={item.upstream}>← {item.upstream}</div>
+                  {serving ? (
+                    <span className="w-[56px] text-right text-[10px] text-bear inline-flex items-center justify-end gap-0.5 shrink-0">
+                      <Check className="h-2.5 w-2.5" />服务中
+                    </span>
+                  ) : declaredCap ? (
+                    <span className={`w-[56px] text-right text-[10px] shrink-0 ${plugin.available ? 'text-secondary' : 'text-warning/80'}`}>
+                      {plugin.available ? '已适配' : '未就绪'}
+                    </span>
+                  ) : (
+                    <span className="w-[56px] text-right text-[10px] text-muted/30 shrink-0">—</span>
                   )}
                 </div>
               )
             })}
-            {(plugin.inventory ?? []).length === 0 && matrixCaps
-              .filter(c => declared.has(c.id))
-              .map(cap => (
-                <div key={cap.id} className="flex items-center gap-2.5 px-3 py-1.5">
-                  <span className="text-xs text-foreground">{cap.label}</span>
-                  <span className="ml-1.5 text-[10px] text-muted/60">{cap.desc}</span>
-                  <span className={`ml-auto w-[56px] text-right text-[10px] shrink-0 ${servingSet.has(cap.id) ? 'text-bear' : 'text-secondary'}`}>
-                    {servingSet.has(cap.id) ? '服务中' : plugin.available ? '已适配' : '未就绪'}
-                  </span>
-                </div>
-              ))}
           </div>
         </div>
       </div>

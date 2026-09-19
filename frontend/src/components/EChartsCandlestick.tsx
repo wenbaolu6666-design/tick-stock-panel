@@ -340,6 +340,8 @@ interface Props {
   activeIndicators?: string[]
   /** 成交量柱相对前 N 个交易日均量的显示设置 */
   volumeCompare?: VolumeCompareConfig
+  /** 加入自选日 (北京时间 YYYY-MM-DD); 有值且落在当前区间内时, 主图画一条「自选」竖虚线 */
+  addedDate?: string | null
 }
 
 // 序列颜色 (双主题通用); 画布轴/网格/文字等主题相关色走 CT() 动态取
@@ -360,6 +362,9 @@ const CT = () => chartTheme(getTheme())
 
 /** 可见蜡烛超过此数量时，涨停/炸板标签切换为小圆点。 */
 const COMPACT_THRESHOLD = 60
+
+/** 加入自选日竖线颜色 (蓝色虚线, 与同花顺的标注观感一致) */
+const ADDED_DATE_COLOR = '#3B82F6'
 
 /** 子图上方信息栏高度 (px) */
 const INFO_BAR_H = 16
@@ -474,6 +479,7 @@ function buildOption(
   infoIdx: number,
   linkedPrice: number | null | undefined,
   volumeCompare: VolumeCompareConfig,
+  addedDate: string | null | undefined,
 ): EChartsOption {
   const candleData = data.map(d => [d.open, d.close, d.low, d.high])
 
@@ -694,6 +700,69 @@ function buildOption(
     series.push(maLine('ma60', THEME.ma60, 'MA60'))
   }
 
+  // 加入自选日标注: 蓝色竖虚线从该根K线的下沿连到主图底端的「自选」标签。
+  // 用 custom series 而非 markLine: 两端要贴网格底边, 而 y 轴随 dataZoom 动态定界,
+  // 静态 option 里算不出底边价格; markLine 的坐标是数据坐标, 越界值会让整条线被丢弃。
+  //
+  // 加入日不一定有K线 (周末/节假日加入, 或当天数据尚未落盘), 此时回落到 <= 加入日的
+  // 最近交易日 —— 与「加入以来」的基准日同口径, 竖线所在那天的收盘价正是基准价。
+  // 仍落在当前区间外 (例如半年前加入) 才不画, 由弹窗工具栏「自选于 …」文字兜底。
+  const addedIdx = (() => {
+    if (!addedDate) return undefined
+    const exact = dateIndexMap.get(addedDate)
+    if (exact != null) return exact
+    let last: number | undefined  // dates 升序, 取最后一个 <= addedDate 的类目
+    for (let i = 0; i < dates.length; i += 1) {
+      if (dates[i] > addedDate) break
+      last = i
+    }
+    return last
+  })()
+  if (addedIdx != null && data[addedIdx]) {
+    // 标签内留白四边各 4px (两个汉字 @10px ≈ 20x10 → 框 28x18);
+    // 整个框再离图表下边框留 8px margin
+    const BADGE_PAD = 4
+    const BADGE_W = 20 + BADGE_PAD * 2
+    const BADGE_H = 10 + BADGE_PAD * 2
+    const BADGE_MARGIN_BOTTOM = 8
+    series.push({
+      name: 'addedDateMark',
+      type: 'custom',
+      xAxisIndex: 0, yAxisIndex: 0,
+      silent: true, animation: false, z: 3,
+      data: [[addedIdx, data[addedIdx].low]],
+      renderItem: (params: any, api: any) => {
+        const cs = params.coordSys
+        const [x, lowY] = api.coord([api.value(0), api.value(1)])
+        const badgeTop = cs.y + cs.height - BADGE_H - BADGE_MARGIN_BOTTOM
+        return {
+          type: 'group',
+          children: [
+            {
+              type: 'line',
+              // 该根K线下沿低于标签时 (贴底的长下影) 夹到标签顶, 避免线段反向
+              shape: { x1: x, y1: Math.min(lowY, badgeTop), x2: x, y2: badgeTop },
+              style: { stroke: ADDED_DATE_COLOR, lineWidth: 1, lineDash: [4, 3] },
+            },
+            {
+              type: 'rect',
+              shape: { x: x - BADGE_W / 2, y: badgeTop, width: BADGE_W, height: BADGE_H, r: 2 },
+              style: { fill: CT().tooltipBg, stroke: ADDED_DATE_COLOR, lineWidth: 1 },
+            },
+            {
+              type: 'text',
+              style: {
+                text: '自选', x, y: badgeTop + BADGE_H / 2, fill: ADDED_DATE_COLOR,
+                font: '10px JetBrains Mono, monospace',
+                textAlign: 'center', textVerticalAlign: 'middle',
+              },
+            },
+          ],
+        }
+      },
+    })
+  }
+
   // BOLL 布林带 — 需在 activeIndicators 中激活
   const showBOLL = activeIndicators.includes('boll') && data.some(d => d.boll_upper != null || d.boll_lower != null)
   if (showBOLL) {
@@ -817,6 +886,7 @@ export function EChartsCandlestick({
   visibleBars = 60,
   activeIndicators = [],
   volumeCompare = { enabled: true, days: 1 },
+  addedDate,
 }: Props) {
   const hoverSurfaceRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -832,7 +902,6 @@ export function EChartsCandlestick({
 
   // --- 全部用 ref，避免高频交互触发 React 重渲染 ---
   const infoIdxRef = useRef<number>(data.length - 1)
-  const hoverDateRef = useRef<string | null>(null)
   const compactRef = useRef(false)
   const userZoomRef = useRef<{ start: number; end: number } | null>(null)
   // 竖虚线(crosshair)是否可见: 控制信息栏「至今」字段的显隐。鼠标移出图表区即 false。
@@ -1011,22 +1080,20 @@ export function EChartsCandlestick({
     // 设计原则: 找不到有效数据时保持上次显示，永远不清空信息栏。
     chart.on('updateAxisPointer', (event: any) => {
       const axesInfo = event.axesInfo
-      if (!axesInfo) return // 鼠标移出图表区域，保持当前显示
       const d = dataRef.current
       // 竖虚线是否正落在某根有效 K 线上 (鼠标在图表数据区内)
       let foundIdx = -1
-      for (const info of Object.values(axesInfo)) {
-        const val = (info as any)?.value
-        if (val == null) continue
-        const idx = typeof val === 'number' ? val : d.findIndex(x => x.date === val)
-        if (idx >= 0 && idx < d.length) { foundIdx = idx; break }
-      }
+      if (axesInfo) {
+        for (const info of Object.values(axesInfo)) {
+          const val = (info as any)?.value
+          if (val == null) continue
+          const idx = typeof val === 'number' ? val : d.findIndex(x => x.date === val)
+          if (idx >= 0 && idx < d.length) { foundIdx = idx; break }
         }
       }
       if (foundIdx < 0) return
       const idxChanged = infoIdxRef.current !== foundIdx
       if (idxChanged) infoIdxRef.current = foundIdx
-      hoverDateRef.current = d[foundIdx]?.date ?? hoverDateRef.current
       // 悬停 K 线变化 → 重绘一次信息栏; 显隐由外层图表区域 enter/leave 负责。
       if (idxChanged) {
         const infoEl = infoBarRef.current
@@ -1039,39 +1106,18 @@ export function EChartsCandlestick({
       if (idxChanged) triggerInfoBarUpdate()
     })
 
-    // 点击绘图区任意位置(出现十字虚线的范围)即按横轴就近取交易日切换分时,
-    // 不再要求点中 K 线柱本体 (空隙/影线外/指标子图区域同样可点)。
-    const handleZrClick = (event: any) => {
-      // 点击任意格区 → 切到十字虚线所在交易日。
-      // 悬停处理器(updateAxisPointer)已可靠给出所在日期(信息条跟随),
-      // 直接采用; 无悬停记录时退回像素→类目索引转换链。
-      const d = dataRef.current
-      if (!d.length) return
-      let idx = hoverDateRef.current ? d.findIndex((item) => item.date === hoverDateRef.current) : -1
-      if (idx < 0) {
-        const pixel: [number, number] = [event.offsetX, event.offsetY]
-        if (!chart.containPixel('grid', pixel)) return
-        const xFrom = (finder: any): number => {
-          try {
-            const c = chart.convertFromPixel(finder, pixel)
-            const v = Array.isArray(c) ? c[0] : c
-            return typeof v === 'number' && Number.isFinite(v) ? v : NaN
-          } catch {
-            return NaN
-          }
-        }
-        let x = xFrom({ seriesIndex: 0 })
-        if (!Number.isFinite(x)) x = xFrom({ xAxisIndex: 0 })
-        if (!Number.isFinite(x)) x = xFrom({ gridIndex: 0 })
-        idx = Number.isFinite(x)
-          ? Math.min(Math.max(Math.round(x), 0), d.length - 1)
-          : -1
+    chart.on('click', (params: any) => {
+      if (params.componentType === 'markPoint' && params.name) {
+        onDateClickRef.current?.(params.name)
+        return
       }
+      if (params.seriesName !== 'K' || params.dataIndex == null) return
+      const d = dataRef.current
+      const idx = params.dataIndex
       if (idx >= 0 && idx < d.length) {
         onDateClickRef.current?.(d[idx].date)
       }
-    }
-    chart.getZr().on('click', handleZrClick)
+    })
 
     const handlePriceDoubleClick = (event: { offsetX: number; offsetY: number }) => {
       const pixel: [number, number] = [event.offsetX, event.offsetY]
@@ -1108,7 +1154,7 @@ export function EChartsCandlestick({
 
     return () => {
       chart.off('updateAxisPointer')
-      chart.getZr().off('click', handleZrClick)
+      chart.off('click')
       chart.off('dataZoom')
       hoverEl.removeEventListener('mouseenter', handlePointerEnter)
       hoverEl.removeEventListener('mouseleave', handlePointerLeave)
@@ -1202,6 +1248,7 @@ export function EChartsCandlestick({
       infoIdxRef.current,
       linkedPrice,
       volumeCompare,
+      addedDate,
     )
 
     chart.setOption(option, true)
@@ -1219,7 +1266,7 @@ export function EChartsCandlestick({
     if (infoEl) {
       infoEl.innerHTML = getInfoBarHTML()
     }
-  }, [data, markers, ranges, priceLines, linkedPrice, showMA, showMarkersProp, activeIndicators, volumeCompare, chartHeight, dates, dateIndexMap, initialZoom, getInfoBarHTML, theme])
+  }, [data, markers, ranges, priceLines, linkedPrice, showMA, showMarkersProp, activeIndicators, volumeCompare, addedDate, chartHeight, dates, dateIndexMap, initialZoom, getInfoBarHTML, theme])
 
   // 渲染信息栏容器 (内容由 JS 直接写入)
   const initialHTML = useMemo(() => {

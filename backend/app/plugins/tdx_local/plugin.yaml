@@ -4,7 +4,7 @@ display_name: "通达信本地日线"
 runtime: none
 entry: app.plugins.tdx_local.provider:TdxLocalProvider
 check: app.plugins.tdx_local.provider:availability
-datasets: [daily, minute]
+datasets: [daily, minute, minute_history]
 description: "通达信本地 vipdoc 直读：不复权日K(.day)、分钟K(.lc5 五分钟原生 98 交易日/.lc1 一分钟, 日期锚定同标的日线序列)。本地只到上一交易日, 当天需等盘后下载(~16:30)。零网络零客户端依赖。"
 inventory:
   - dataset: daily

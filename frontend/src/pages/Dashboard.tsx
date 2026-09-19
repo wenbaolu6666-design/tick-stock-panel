@@ -16,6 +16,7 @@ import { useAdjFactorSyncGate } from '@/components/AdjFactorSyncGate'
 import { STAGE_LABELS } from '@/components/data/ActiveJobCard'
 import { cn } from '@/lib/cn'
 import { cnSignal } from '@/lib/signals'
+import { useCustomSignalNames } from '@/lib/useCustomSignalNames'
 import { strategyEventMeta, strategyName } from '@/lib/strategyMonitorEvents'
 import { boardTag } from '@/components/stock-table/primitives'
 
@@ -103,6 +104,7 @@ function MonitorWidget({ onStockClick, activeSymbol }: {
   activeSymbol?: string
 }) {
   const navigate = useNavigate()
+  const customNames = useCustomSignalNames()
   const alerts = useQuery({
     queryKey: ['alerts', ''],
     queryFn: () => api.alertsList({ days: 7, limit: 10 }),
@@ -114,15 +116,7 @@ function MonitorWidget({ onStockClick, activeSymbol }: {
 
   if (events.length === 0) {
     return (
-      <div className="mt-1 py-5 text-center">
-        <div className="text-[11px] text-muted">暂无触发记录</div>
-        <Link
-          to="/monitor"
-          className="mt-2 inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] text-accent hover:bg-accent/10 transition-colors"
-        >
-          去监控中心创建监控规则 <ArrowUpRight className="h-3 w-3" />
-        </Link>
-      </div>
+      <div className="mt-1 py-6 text-center text-[11px] text-muted">暂无触发记录</div>
     )
   }
 
@@ -201,7 +195,7 @@ function MonitorWidget({ onStockClick, activeSymbol }: {
                   {ev.signals && ev.signals.length > 0 && (
                     <div className="mt-1 flex flex-wrap gap-1">
                       {ev.signals.map(signal => (
-                        <span key={signal} className="rounded bg-accent/8 px-1 py-px text-[8px] text-accent/80">{cnSignal(signal)}</span>
+                        <span key={signal} className="rounded bg-accent/8 px-1 py-px text-[8px] text-accent/80">{cnSignal(signal, customNames)}</span>
                       ))}
                     </div>
                   )}
@@ -222,7 +216,7 @@ function MonitorWidget({ onStockClick, activeSymbol }: {
                   {ev.signals && ev.signals.length > 0 && (
                     <div className="mt-1 flex flex-wrap gap-1">
                       {ev.signals.map((s, j) => (
-                        <span key={j} className="rounded bg-accent/8 px-1 py-px text-[8px] text-accent/80">{cnSignal(s)}</span>
+                        <span key={j} className="rounded bg-accent/8 px-1 py-px text-[8px] text-accent/80">{cnSignal(s, customNames)}</span>
                       ))}
                     </div>
                   )}
@@ -621,11 +615,6 @@ export function Dashboard() {
   const hasDepth = !!caps.data?.capabilities?.['depth5.batch']
   const sealedReady = !!data?.limit?.sealed_ready
   const isSealedDegrade = !hasDepth || !sealedReady
-  const qLhb = useQuery({
-    queryKey: ['dashboard', 'lhb'],
-    queryFn: () => api.dashboardLhb(12),
-    refetchInterval: 300_000,
-  })
   // 空态引导文案按当前数据源分流: TickFlow 源提"免费服务器", 其他源提"当前数据源",
   // 弱化与默认 TickFlow 的隐式绑定 (None 档/免费 Key 等 TickFlow 概念仅在其被选中时出现)
   const prefs = usePreferences()
@@ -847,13 +836,11 @@ export function Dashboard() {
         <KpiCell label="换手 / 量比" value={`${fmtPrice(data.activity.avg_turnover, 1)}% / ${fmtPrice(data.activity.vol_ratio, 2)}`} sub={`高换手 ${data.activity.high_turnover} · 放量占比 ${fmtPrice(data.activity.high_vol_ratio, 1)}%`} tone="accent" />
       </div>
 
-      {/* 统一行容器: 左右卡片同处一个 flex 行, 行高 = 最高者, 各卡拉伸 → 逐行像素级对齐 */}
-      <div className="flex flex-col gap-1.5">
-        {/* 行1: 涨跌分布 | 情绪雷达 | 趋势强度 ‖ 涨停梯队 */}
-        <div className="flex flex-col gap-1.5 lg:flex-row lg:items-stretch">
-          <section className="flex-1 min-w-0 flex flex-col rounded-card border border-border bg-surface/80 p-1.5 shadow-[0_1px_2px_hsl(var(--border)/0.4)] backdrop-blur-sm transition-shadow hover:shadow-[0_2px_8px_hsl(var(--border)/0.5)]">
-            <SectionTitle icon={BarChart3} title="涨跌分布 / 广度" hint={`${data.breadth.total}只`} />
-            <div className="flex-1">
+      <div className="grid grid-cols-1 gap-1.5 xl:grid-cols-[minmax(0,1fr)_20rem]">
+        <main className="min-w-0 space-y-1.5">
+          <div className="grid grid-cols-1 gap-1.5 lg:grid-cols-3">
+            <section className="rounded-card border border-border bg-surface/80 p-1.5 shadow-[0_1px_2px_hsl(var(--border)/0.4)] backdrop-blur-sm transition-shadow hover:shadow-[0_2px_8px_hsl(var(--border)/0.5)]">
+              <SectionTitle icon={BarChart3} title="涨跌分布 / 广度" hint={`${data.breadth.total}只`} />
               <DistributionBars rows={data.distribution} />
               <div className="mt-2">
                 <BreadthBar data={data.breadth} />
@@ -862,53 +849,43 @@ export function Dashboard() {
                 <MiniMetric label="平均涨跌" value={fmtStockPct(data.breadth.avg_pct)} cls={pctClass(data.breadth.avg_pct)} />
                 <MiniMetric label="中位涨跌" value={fmtStockPct(data.breadth.median_pct)} cls={pctClass(data.breadth.median_pct)} />
               </div>
-            </div>
-          </section>
+            </section>
 
-          <section
-            className="flex-1 min-w-0 rounded-card border bg-surface/80 p-1.5 shadow-[0_1px_2px_hsl(var(--border)/0.4)] backdrop-blur-sm transition-shadow hover:shadow-[0_2px_8px_hsl(var(--border)/0.5)]"
-            style={{ borderColor: `${scoreColor(score)}40` }}
-          >
-            <SectionTitle icon={Sparkles} title="情绪雷达" hint={`情绪评分 ${score}`} />
-            <EmotionRadar radar={data.radar} score={score} />
-          </section>
+            <section
+              className="rounded-card border bg-surface/80 p-1.5 shadow-[0_1px_2px_hsl(var(--border)/0.4)] backdrop-blur-sm transition-shadow hover:shadow-[0_2px_8px_hsl(var(--border)/0.5)]"
+              style={{ borderColor: `${scoreColor(score)}40` }}
+            >
+              <SectionTitle icon={Sparkles} title="情绪雷达" hint={`情绪评分 ${score}`} />
+              <EmotionRadar radar={data.radar} score={score} />
+            </section>
 
-          <section className="flex-1 min-w-0 flex flex-col rounded-card border border-border bg-surface/80 p-1.5 shadow-[0_1px_2px_hsl(var(--border)/0.4)] backdrop-blur-sm transition-shadow hover:shadow-[0_2px_8px_hsl(var(--border)/0.5)]">
-            <div>
-              <SectionTitle icon={LineChart} title="趋势强度" hint="均线/新高低" />
-              <div className="grid grid-cols-3 gap-1.5">
-                <MiniMetric label="站上MA5" value={`${data.trend.above_ma5_pct.toFixed(0)}%`} cls="text-accent" />
-                <MiniMetric label="站上MA20" value={`${data.trend.above_ma20_pct.toFixed(0)}%`} cls="text-accent" />
-                <MiniMetric label="站上MA60" value={`${data.trend.above_ma60_pct.toFixed(0)}%`} cls="text-accent" />
-                <MiniMetric label="60日新高" value={compactCount(data.trend.new_high)} cls="text-bull" />
-                <MiniMetric label="60日新低" value={compactCount(data.trend.new_low)} cls="text-bear" />
-                <MiniMetric label="高低比" value={`${data.trend.new_high + data.trend.new_low > 0 ? Math.round(data.trend.new_high / (data.trend.new_high + data.trend.new_low) * 100) : 50}%`} cls={data.trend.new_high >= data.trend.new_low ? 'text-bull' : 'text-bear'} />
+            <section className="flex flex-col rounded-card border border-border bg-surface/80 p-1.5 shadow-[0_1px_2px_hsl(var(--border)/0.4)] backdrop-blur-sm transition-shadow hover:shadow-[0_2px_8px_hsl(var(--border)/0.5)]">
+              <div>
+                <SectionTitle icon={LineChart} title="趋势强度" hint="均线/新高低" />
+                <div className="grid grid-cols-3 gap-1.5">
+                  <MiniMetric label="站上MA5" value={`${data.trend.above_ma5_pct.toFixed(0)}%`} cls="text-accent" />
+                  <MiniMetric label="站上MA20" value={`${data.trend.above_ma20_pct.toFixed(0)}%`} cls="text-accent" />
+                  <MiniMetric label="站上MA60" value={`${data.trend.above_ma60_pct.toFixed(0)}%`} cls="text-accent" />
+                  <MiniMetric label="60日新高" value={compactCount(data.trend.new_high)} cls="text-bull" />
+                  <MiniMetric label="60日新低" value={compactCount(data.trend.new_low)} cls="text-bear" />
+                  <MiniMetric label="高低比" value={`${data.trend.new_high + data.trend.new_low > 0 ? Math.round(data.trend.new_high / (data.trend.new_high + data.trend.new_low) * 100) : 50}%`} cls={data.trend.new_high >= data.trend.new_low ? 'text-bull' : 'text-bear'} />
+                </div>
               </div>
-            </div>
-            <div className="mt-1.5 border-t border-border pt-1.5">
-              <SectionTitle icon={Target} title="实用监控" hint="盘中观察" />
-              <div className="grid grid-cols-3 gap-1.5">
-                <MiniMetric label="炸板" value={`${data.limit.broken ?? 0}`} cls="text-warning" />
-                <MiniMetric label="跌停" value={`${data.limit.limit_down ?? 0}`} cls="text-bear" />
-                <MiniMetric label="站上MA60" value={`${data.trend.above_ma60_pct.toFixed(0)}%`} cls="text-accent" />
-                <MiniMetric label="新高/新低" value={`${compactCount(data.trend.new_high)}/${compactCount(data.trend.new_low)}`} cls={data.trend.new_high >= data.trend.new_low ? 'text-bull' : 'text-bear'} />
-                <MiniMetric label="高换手数" value={`${data.activity.high_turnover}`} cls="text-accent" />
-                <MiniMetric label="放量占比" value={`${fmtPrice(data.activity.high_vol_ratio, 1)}%`} cls="text-accent" />
+              <div className="mt-1.5 border-t border-border pt-1.5">
+                <SectionTitle icon={Target} title="实用监控" hint="盘中观察" />
+                <div className="grid grid-cols-3 gap-1.5">
+                  <MiniMetric label="炸板" value={`${data.limit.broken ?? 0}`} cls="text-warning" />
+                  <MiniMetric label="跌停" value={`${data.limit.limit_down ?? 0}`} cls="text-bear" />
+                  <MiniMetric label="站上MA60" value={`${data.trend.above_ma60_pct.toFixed(0)}%`} cls="text-accent" />
+                  <MiniMetric label="新高/新低" value={`${compactCount(data.trend.new_high)}/${compactCount(data.trend.new_low)}`} cls={data.trend.new_high >= data.trend.new_low ? 'text-bull' : 'text-bear'} />
+                  <MiniMetric label="高换手数" value={`${data.activity.high_turnover}`} cls="text-accent" />
+                  <MiniMetric label="放量占比" value={`${fmtPrice(data.activity.high_vol_ratio, 1)}%`} cls="text-accent" />
+                </div>
               </div>
-            </div>
-          </section>
+            </section>
+          </div>
 
-          <section className="w-full lg:w-80 lg:shrink-0 flex flex-col rounded-card border border-border bg-surface/80 p-1.5 shadow-[0_1px_2px_hsl(var(--border)/0.4)] backdrop-blur-sm transition-shadow hover:shadow-[0_2px_8px_hsl(var(--border)/0.5)]">
-            <SectionTitle icon={Flame} title="涨停梯队" hint={<span className="inline-flex items-center gap-1">{`涨停 ${data.limit.limit_up}`}{isSealedDegrade && <span className="text-[9px] px-1 rounded bg-yellow-500/10 text-yellow-600 dark:text-yellow-500">{hasDepth ? '未修正' : '降级'}</span>}</span>} />
-            <div className="flex-1 min-h-0 overflow-y-auto">
-              <LadderMini limit={data.limit} />
-            </div>
-          </section>
-        </div>
-
-        {/* 行2: 概念热度 | 行业热度 ‖ 监控中心 + 北向资金 */}
-        <div className="flex flex-col gap-1.5 lg:flex-row lg:items-stretch">
-          <div className="flex-1 min-w-0 grid grid-cols-1 gap-1.5 md:grid-cols-2">
+          <div className="grid grid-cols-1 gap-1.5 md:grid-cols-2">
             <HotRankCard title="概念热度" rank={data.concept_rank} configUrl="/concept-analysis" activeSymbol={previewStock?.source === 'concept' ? previewStock.symbol : undefined}
               onStockClick={(symbol, name) => setPreviewStock({ symbol, name, source: 'concept', navList: rankNav(data.concept_rank) })}
               onDimensionClick={setDimensionTarget} />
@@ -917,81 +894,38 @@ export function Dashboard() {
               onDimensionClick={setDimensionTarget} />
           </div>
 
-          <div className="w-full lg:w-80 lg:shrink-0 flex flex-col gap-1.5">
-            <section className="flex-1 min-h-0 flex flex-col rounded-card border border-border bg-surface/80 p-1.5 shadow-[0_1px_2px_hsl(var(--border)/0.4)] backdrop-blur-sm transition-shadow hover:shadow-[0_2px_8px_hsl(var(--border)/0.5)]">
-              <div className="mb-2 flex items-center justify-between gap-2">
-                <div className="flex items-center gap-1.5">
-                  <BellRing className="h-3.5 w-3.5 text-accent" />
-                  <h2 className="text-xs font-semibold text-foreground">监控中心</h2>
-                  <span className="font-mono text-[10px] text-muted">实时信号</span>
-                </div>
-                <Link to="/monitor" className="inline-flex items-center justify-center h-5 w-5 rounded text-muted hover:text-accent hover:bg-accent/10 transition-colors" title="进入监控中心">
-                  <ArrowUpRight className="h-3.5 w-3.5" />
-                </Link>
-              </div>
-              <div className="flex-1 min-h-0 overflow-y-auto">
-                <MonitorWidget
-                  activeSymbol={previewStock?.source === 'alert' ? previewStock.symbol : undefined}
-                  onStockClick={(event, navList) => {
-                    if (event.symbol) setPreviewStock({ symbol: event.symbol, name: event.name ?? undefined, alert: event, source: 'alert', navList })
-                  }}
-                />
-              </div>
-            </section>
-            <NorthboundMiniCard />
-          </div>
-        </div>
-
-        {/* 行3: 涨幅榜 | 跌幅榜 | 成交额榜 | 活跃换手 ‖ 龙虎榜 */}
-        <div className="flex flex-col gap-1.5 lg:flex-row lg:items-stretch">
-          <div className="flex-1 min-w-0 grid grid-cols-1 gap-1.5 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 xl:grid-cols-4">
             <StockList title="涨幅榜" rows={data.top_gainers} mode="gain" activeSymbol={previewStock?.source === 'gain' ? previewStock.symbol : undefined} onStockClick={(symbol, name) => setPreviewStock({ symbol, name, source: 'gain', navList: stockListNav(data.top_gainers) })} />
             <StockList title="跌幅榜" rows={data.top_losers} mode="loss" activeSymbol={previewStock?.source === 'loss' ? previewStock.symbol : undefined} onStockClick={(symbol, name) => setPreviewStock({ symbol, name, source: 'loss', navList: stockListNav(data.top_losers) })} />
             <StockList title="成交额榜" rows={data.turnover_leaders} mode="amount" activeSymbol={previewStock?.source === 'amount' ? previewStock.symbol : undefined} onStockClick={(symbol, name) => setPreviewStock({ symbol, name, source: 'amount', navList: stockListNav(data.turnover_leaders) })} />
             <StockList title="活跃换手" rows={data.active_leaders} mode="active" activeSymbol={previewStock?.source === 'active' ? previewStock.symbol : undefined} onStockClick={(symbol, name) => setPreviewStock({ symbol, name, source: 'active', navList: stockListNav(data.active_leaders) })} />
           </div>
+        </main>
 
-          <section className="w-full lg:w-80 lg:shrink-0 flex flex-col rounded-card border border-border bg-surface/80 p-1.5 shadow-[0_1px_2px_hsl(var(--border)/0.4)] backdrop-blur-sm transition-shadow hover:shadow-[0_2px_8px_hsl(var(--border)/0.5)]">
-              <div className="mb-1 flex items-center justify-between gap-2">
-                <div className="flex items-center gap-1.5">
-                  <Flame className="h-3.5 w-3.5 text-accent" />
-                  <h2 className="text-xs font-semibold text-foreground">龙虎榜</h2>
-                  <span className="font-mono text-[10px] text-muted">{qLhb?.data?.date ?? ''}</span>
-                </div>
-                <span className="text-[10px] text-muted">净买额降序</span>
-              </div>
-            {qLhb?.isLoading ? (
-              <div className="flex flex-1 items-center justify-center text-[11px] text-muted"><Loader2 className="h-3 w-3 animate-spin" /></div>
-            ) : !qLhb?.data?.ok || (qLhb?.data?.rows ?? []).length === 0 ? (
-              <div className="flex flex-1 items-center justify-center text-[11px] text-muted">{qLhb?.data?.error || '暂无数据'}</div>
-            ) : (
-              <div className="flex-1 min-h-0 space-y-0.5 overflow-y-auto">
-                {(qLhb.data.rows).map((r, i) => {
-                  const nb = r.net_buy ?? 0
-                  return (
-                    <div key={`${r.symbol}-${i}`} className="grid grid-cols-[14px_1fr_auto] items-center gap-1.5 rounded-md bg-elevated/40 px-1.5 py-1">
-                      <span className="font-mono text-[10px] text-muted">{i + 1}</span>
-                      <button
-                        onClick={() => r.symbol && setPreviewStock({ symbol: r.symbol, name: r.name ?? '' })}
-                        className="min-w-0 text-left"
-                        title={r.reason ?? ''}
-                      >
-                        <div className="truncate text-[11px] text-foreground/90 hover:text-accent transition-colors">
-                          {r.name || r.symbol}
-                          <span className="ml-1 font-mono text-[9px] text-muted/70">{r.symbol?.replace(/\.(SH|SZ|BJ)$/, '')}</span>
-                        </div>
-                        {r.reason && <div className="truncate text-[9px] text-muted/70">{r.reason}</div>}
-                      </button>
-                      <span className={`font-mono text-[10px] font-medium ${(nb >= 0) ? 'text-bull' : 'text-bear'}`}>
-                        {nb >= 0 ? '+' : ''}{(nb / 1e8).toFixed(2)} 亿
-                      </span>
-                    </div>
-                  )
-                })}
-              </div>
-            )}
+        <aside className="min-w-0 space-y-1.5">
+          <section className="rounded-card border border-border bg-surface/80 p-1.5 shadow-[0_1px_2px_hsl(var(--border)/0.4)] backdrop-blur-sm transition-shadow hover:shadow-[0_2px_8px_hsl(var(--border)/0.5)]">
+            <SectionTitle icon={Flame} title="涨停梯队" hint={<span className="inline-flex items-center gap-1">{`涨停 ${data.limit.limit_up}`}{isSealedDegrade && <span className="text-[9px] px-1 rounded bg-yellow-500/10 text-yellow-600 dark:text-yellow-500">{hasDepth ? '未修正' : '降级'}</span>}</span>} />
+            <LadderMini limit={data.limit} />
           </section>
-        </div>
+          <section className="rounded-card border border-border bg-surface/80 p-1.5 shadow-[0_1px_2px_hsl(var(--border)/0.4)] backdrop-blur-sm transition-shadow hover:shadow-[0_2px_8px_hsl(var(--border)/0.5)]">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5">
+                <BellRing className="h-3.5 w-3.5 text-accent" />
+                <h2 className="text-xs font-semibold text-foreground">监控中心</h2>
+                <span className="font-mono text-[10px] text-muted">实时信号</span>
+              </div>
+              <Link to="/monitor" className="inline-flex items-center justify-center h-5 w-5 rounded text-muted hover:text-accent hover:bg-accent/10 transition-colors" title="进入监控中心">
+                <ArrowUpRight className="h-3.5 w-3.5" />
+              </Link>
+            </div>
+            <MonitorWidget
+              activeSymbol={previewStock?.source === 'alert' ? previewStock.symbol : undefined}
+              onStockClick={(event, navList) => {
+                if (event.symbol) setPreviewStock({ symbol: event.symbol, name: event.name ?? undefined, alert: event, source: 'alert', navList })
+              }}
+            />
+          </section>
+        </aside>
       </div>
 
       <StockPreviewDialog
@@ -1106,62 +1040,6 @@ function FetchDataCard({
         </div>
       </div>
     </div>
-  )
-}
-
-// ===== 右栏小卡: 北向资金分钟累计 (ths_basic hsgtApi, 唯一来源) =====
-function NorthboundMiniCard() {
-  const q = useQuery({
-    queryKey: ['dashboard', 'northbound'],
-    queryFn: api.dashboardNorthbound,
-    refetchInterval: 60_000,
-  })
-  const rows = q.data?.rows ?? []
-  const series = rows.map(r => (r.hgt ?? 0) + (r.sgt ?? 0))
-  const latest = q.data?.latest
-  const pos = (latest?.total ?? 0) >= 0
-  const tone = pos ? 'text-bull' : 'text-bear'
-  // SVG 折线: 归一化到 viewBox
-  const w = 200, h = 44
-  let path = ''
-  if (series.length >= 2) {
-    const min = Math.min(...series), max = Math.max(...series)
-    const span = max - min || 1
-    path = series
-      .map((v, i) => `${i === 0 ? 'M' : 'L'}${((i / (series.length - 1)) * w).toFixed(1)},${(h - ((v - min) / span) * (h - 4) - 2).toFixed(1)}`)
-      .join(' ')
-  }
-  return (
-    <section className="shrink-0 rounded-card border border-border bg-surface/80 p-1.5 shadow-[0_1px_2px_hsl(var(--border)/0.4)] backdrop-blur-sm transition-shadow hover:shadow-[0_2px_8px_hsl(var(--border)/0.5)]">
-      <div className="mb-1 flex items-center justify-between gap-2">
-        <div className="flex items-center gap-1.5">
-          <LineChart className="h-3.5 w-3.5 text-accent" />
-          <h2 className="text-xs font-semibold text-foreground">北向资金</h2>
-          <span className="font-mono text-[10px] text-muted">分钟累计</span>
-        </div>
-        {latest && (
-          <span className={`font-mono text-[11px] font-semibold ${tone}`}>
-            {latest.total >= 0 ? '+' : ''}{latest.total.toFixed(2)} 亿
-          </span>
-        )}
-      </div>
-      {q.isLoading ? (
-        <div className="flex h-14 items-center justify-center text-[11px] text-muted"><Loader2 className="h-3 w-3 animate-spin" /></div>
-      ) : !q.data?.ok || path === '' ? (
-        <div className="flex h-14 items-center justify-center text-[11px] text-muted">{q.data?.error || '暂无数据'}</div>
-      ) : (
-        <>
-          <svg viewBox={`0 0 ${w} ${h}`} className="h-14 w-full" preserveAspectRatio="none">
-            <path d={path} fill="none" stroke="currentColor" strokeWidth="1.4" className={tone} />
-          </svg>
-          <div className="mt-0.5 flex justify-between font-mono text-[9px] text-muted">
-            <span>沪 {latest?.hgt?.toFixed(1) ?? '—'} 亿</span>
-            <span>{latest?.time ?? ''}</span>
-            <span>深 {latest?.sgt?.toFixed(1) ?? '—'} 亿</span>
-          </div>
-        </>
-      )}
-    </section>
   )
 }
 

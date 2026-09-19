@@ -1,8 +1,6 @@
-﻿"""FastAPI 入口。"""
+"""FastAPI 入口。"""
 from __future__ import annotations
 
-import threading
-import time
 import logging
 import sys
 from contextlib import asynccontextmanager
@@ -19,7 +17,6 @@ from app.api import (
     alerts,
     analysis,
     backtest,
-    dashboard,
     data,
     ext_data,
     factors,
@@ -138,12 +135,11 @@ async def _application_lifespan(app: FastAPI):
     # Polars 缓存预热 — enriched 的重计算 (107万行 compute_indicators) 推后台,
     # instruments/index/ETF 仍同步 (毫秒级)。应用立即 ready, 指标算完后自动替换。
     # 延迟 90s: 启动期 loader 联网探测与 warmup 线程并发时, duckdb GIL 会竞态崩溃
-    # (Fatal PyEval_SaveThread, 实测 2026-09-19), 错开窗口保证首启稳定。
     def _deferred_warmup() -> None:
         time.sleep(90)
         try:
-            repo.refresh_cache(background=True)
-        except Exception as exc:  # noqa: BLE001
+            repo.refresh_cache(background=False)
+        except Exception as exc:
             logger.warning("deferred warmup failed: %s", exc)
 
     threading.Thread(target=_deferred_warmup, daemon=True, name="deferred-warmup").start()
@@ -210,7 +206,8 @@ async def _application_lifespan(app: FastAPI):
     # 停机缺口自检: 延迟后台扫描, 发现最近交易日的盘中快照/缺口时自动创建
     # 修复任务 (盘中停机→次日开实时场景, 不修则坏数据被"只刷今天"分支永久留存)
     try:
-        # threading 已在模块顶部导入(勿在此局部导入, 会让上方 warmup 引用变 UnboundLocal)
+        import threading
+
         from app.services.data_integrity import boot_integrity_check
 
         timer = threading.Timer(30.0, boot_integrity_check, args=(app.state,))
@@ -479,7 +476,6 @@ async def auth_middleware(request: Request, call_next):
 
 # 路由
 app.include_router(core_router)
-app.include_router(dashboard.router)
 app.include_router(auth_api.router)
 app.include_router(kline.router)
 app.include_router(watchlist.router)

@@ -3,41 +3,12 @@
 # 需在 .env 或环境变量配置 FUYAO_API_KEY, 未配置时插件灰显不可切换。
 
 name: fuyao
-display_name: "同花顺官方（Fuyao）"
+display_name: "fuyao"
 runtime: none
 entry: app.plugins.fuyao.provider:FuyaoProvider
 check: app.plugins.fuyao.provider:availability
-datasets: [realtime, daily, adj_factor, financial, valuation, fund, sector]
+datasets: [realtime, daily, adj_factor, financial]
 api_key_env: FUYAO_API_KEY   # 声明后设置页提供 Key 输入框(先探后存, secrets.json 优先)
-description: "同花顺官方 REST 数据 API。A 股实时快照、日K、除权因子、财务三表，另含估值快照(PE/PB/PS/PCF 批量)与基金数据(资料+净值)。分钟未接入,自动回退 TickFlow。"
+description: "同花顺官方 REST 数据 API。A 股实时快照、日K(原始价: 近端走 10d dump, 深窗口走 10 年全量 dump 一次下载秒级筛选, 兜底单标的接口)、除权因子(事件 dump + 本地日K dump 配价推导, 涨跌停自检, 秒级)、财务(利润表/资产负债表/现金流量表/指标, 字段映射至项目口径, bps 由估值反推; 股本无上游接口, 指标历史期建议切回 TickFlow 补齐);分钟未接入,自动回退 TickFlow。"
 install_hint: "点击卡片中的输入框配置 API Key(https://fuyao.aicubes.cn 申请),或在 .env 中配置 FUYAO_API_KEY"
 homepage: "https://fuyao.aicubes.cn"
-inventory:
-  - dataset: realtime
-    name: "行情快照"
-    desc: "最新价/涨跌幅/开高低/前收/成交量/成交额（可全市场分页）"
-    upstream: "fuyao GET /api/a-share/prices/snapshot"
-  - dataset: daily
-    name: "历史日K"
-    desc: "date_ms/OHLC/volume/turnover，窗口≤10年，adjust=none/forward/backward"
-    upstream: "fuyao GET /api/a-share/prices/historical + dump daily-k(10y/10d Parquet)"
-  - dataset: adj_factor
-    name: "复权因子事件流"
-    desc: "dividend_per_share/per_share_bonus/allotment_ratio/allotment_price 按除权日降序；配价推导 TSP ex_factor（本地计算, 上游 dump 佐证）"
-    upstream: "fuyao GET /api/a-share/corporate-actions/adjustment-factors + dump adjustment-factors"
-  - dataset: financial
-    name: "三大报表"
-    desc: "利润表/资产负债表/现金流量表（period=annual/quarterly, 最近N期或时间区间≤10年）"
-    upstream: "fuyao GET /api/a-share/financials/{income-statements|balance-sheets|cash-flow-statements}"
-  - dataset: valuation
-    name: "估值快照"
-    desc: "pe_ttm/pe_mrq/pb_mrq/ps_ttm/pcf_ttm 五指标批量（≤100 只）"
-    upstream: "fuyao GET /api/a-share/valuations/snapshot"
-  - dataset: fund
-    name: "基金资料+净值"
-    desc: "基金名称/经理/公司/规模/成立日 + 最新单位与累计净值（28 个基金接口中的首两站）"
-    upstream: "fuyao GET /api/fund/profile/detail + /api/fund/performance/nav"
-  - dataset: sector
-    name: "同花顺指数/成分股"
-    desc: "概念/行业/地域/特色指数列表 + 指数成分股（含沪深300等标准指数）"
-    upstream: "fuyao GET /api/a-share-index/catalog/ths-index-list + /constituents/ths-stock-list"

@@ -25,9 +25,26 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * 把浏览器 fetch 抛出的裸网络错误文案翻译成可操作的提示。
+ * 各浏览器文案不同: Chrome "Failed to fetch" / Safari "network error" / "Load failed"。
+ * 典型根因: 后端等 AI 首包期间流式连接被代理/网关按空闲超时切断, 或 AI 服务繁忙。
+ */
+export function friendlyStreamError(message: string | undefined | null): string {
+  if (!message) return ''
+  if (/failed to fetch|network error|load failed|networkerror/i.test(message)) {
+    return '网络连接中断: 通常是 AI 服务繁忙, 或代理/网关超时切断了长连接, 请重试'
+  }
+  return message
+}
+
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
 /** 同步计算型接口 (回测/筛选等) 的放宽超时: 合法耗时可能远超轮询类接口。 */
 const COMPUTE_REQUEST_TIMEOUT_MS = 300_000
+/** 扩展数据拉取类长请求: 跟随后端配置的单次超时 (timeoutSeconds, 默认 30s) + 10s 解析/写盘缓冲。
+ *  浏览器端 fetch 默认 30s abort 会先于后端超时触发, 大响应接口 (如全量集合竞价
+ *  /day, 后端超时 120s) 必须把这层同步放宽。 */
+const extPullTimeoutMs = (timeoutSeconds?: number) => (timeoutSeconds ?? 30) * 1000 + 10_000
 
 async function request<T>(path: string, init?: RequestOptions): Promise<T> {
   const { quiet, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS, ...fetchInit } = init ?? {}
@@ -802,6 +819,7 @@ export type StrategyBuildStreamEvent =
   | { type: 'delta'; content: string }
   | ({ type: 'result' } & StrategyBuildResult)
   | { type: 'error'; message: string }
+  | { type: 'ping' }
 
 export interface StrategyCodeSaveResult {
   ok: boolean
@@ -810,6 +828,20 @@ export interface StrategyCodeSaveResult {
   path: string
   meta: Record<string, any>
   research_only?: boolean
+}
+
+/** AI 迭代每一轮的回测证据 (stats 为比率, 0.15 = 15%) */
+export interface AiIterateRound {
+  round: number
+  stats: Record<string, number> | null
+  change_summary: string
+}
+
+export interface AiIterateResult {
+  draft_strategy_id: string
+  rounds: AiIterateRound[]
+  final_code: string
+  final_meta: Record<string, any>
 }
 
 // ===== Custom Signals (自定义信号) =====
@@ -1650,13 +1682,6 @@ export interface DataSourceItem {
 }
 
 /** 内置可选插件数据源 (plugins/ 目录, 需手动装依赖) */
-export interface PluginInventoryItem {
-  dataset: string         // 所属能力 (数据集键)
-  name: string            // 数据项名称
-  desc?: string           // 提供的内容
-  upstream?: string       // 上游来源 (真实端点/站点)
-}
-
 export interface PluginDataSourceItem {
   name: string
   display_name: string
@@ -1669,8 +1694,6 @@ export interface PluginDataSourceItem {
   homepage?: string        // 插件官网/申请地址 (manifest 可选声明)
   api_key_env?: string     // 声明后设置页提供 Key 输入框 (先探后存)
   api_key_masked?: string  // 当前生效 Key 的脱敏串 (secrets.json 优先, .env 兜底; 与 TickFlow Key 同一展示契约)
-  inventory?: PluginInventoryItem[]  // 数据溯源清单 (manifest inventory, 每项标注上游出处)
-  enabled?: boolean        // 用户是否启用 (停用后从能力路由候选移除)
 }
 
 /** 数据源路由偏好字段 (每个能力一个, 与后端能力注册表一一对应) */
@@ -1682,31 +1705,6 @@ export type ProviderField =
   | 'depth5_data_provider'
   | 'realtime_data_provider'
   | 'financial_data_provider'
-  | 'news_data_provider'
-  | 'dragon_tiger_data_provider'
-  | 'limit_updown_data_provider'
-  | 'market_overview_data_provider'
-  | 'consensus_data_provider'
-  | 'sector_data_provider'
-  | 'hot_list_data_provider'
-  | 'anomaly_data_provider'
-  | 'auction_data_provider'
-  | 'money_flow_data_provider'
-  | 'margin_data_provider'
-  | 'block_trade_data_provider'
-  | 'chip_data_provider'
-  | 'corp_events_data_provider'
-  | 'research_data_provider'
-  | 'announcements_data_provider'
-  | 'macro_data_provider'
-  | 'options_data_provider'
-  | 'valuation_data_provider'
-  | 'kzz_data_provider'
-  | 'ipo_data_provider'
-  | 'survey_data_provider'
-  | 'pledge_data_provider'
-  | 'score_data_provider'
-  | 'fund_data_provider'
 
 /** 能力路由矩阵中的一个候选源 (candidates 只含当前确实可提供该能力的源) */
 export interface CapabilityCandidate {
@@ -1830,31 +1828,6 @@ export interface Preferences {
   depth5_data_provider?: string
   realtime_data_provider?: string
   financial_data_provider?: string
-  news_data_provider?: string
-  dragon_tiger_data_provider?: string
-  limit_updown_data_provider?: string
-  market_overview_data_provider?: string
-  consensus_data_provider?: string
-  sector_data_provider?: string
-  hot_list_data_provider?: string
-  anomaly_data_provider?: string
-  auction_data_provider?: string
-  money_flow_data_provider?: string
-  margin_data_provider?: string
-  block_trade_data_provider?: string
-  chip_data_provider?: string
-  corp_events_data_provider?: string
-  research_data_provider?: string
-  announcements_data_provider?: string
-  macro_data_provider?: string
-  options_data_provider?: string
-  valuation_data_provider?: string
-  kzz_data_provider?: string
-  ipo_data_provider?: string
-  survey_data_provider?: string
-  pledge_data_provider?: string
-  score_data_provider?: string
-  fund_data_provider?: string
   data_source_job_timeout_s: number
   data_source_long_job_timeout_s: number
   minute_batch_compress: boolean
@@ -2072,11 +2045,6 @@ export const api = {
   deleteDataSource: (name: string) =>
     request<DataSourcesResponse>(`/api/settings/data-sources/${encodeURIComponent(name)}`, { method: 'DELETE' }),
   reloadDataSources: () => request<DataSourcesResponse>('/api/settings/data-sources/reload', { method: 'POST' }),
-  togglePlugin: (plugin: string, enabled: boolean) =>
-    request<{ plugin: string; enabled: boolean }>('/api/settings/plugin-toggle', {
-      method: 'POST',
-      body: JSON.stringify({ plugin, enabled }),
-    }),
   installPlugin: (name: string) => {
     // npm install 可能耗时较长, 用 6 分钟超时
     const controller = new AbortController()
@@ -2356,14 +2324,6 @@ export const api = {
     request<{ ok: boolean; count: number; msg: string }>('/api/settings/preferences/limit-ladder-monitor/run', {
       method: 'POST',
     }),
-  dashboardNorthbound: () =>
-    request<{ ok: boolean; rows: { time: string; hgt: number | null; sgt: number | null }[]; latest?: { time: string; hgt: number | null; sgt: number | null; total: number }; error?: string }>(
-      '/api/dashboard/northbound',
-    ),
-  dashboardLhb: (limit = 10) =>
-    request<{ ok: boolean; date: string; rows: { symbol: string; name: string; reason: string; net_buy: number | null; change_pct: number | null }[]; error?: string }>(
-      `/api/dashboard/lhb?limit=${limit}`,
-    ),
   updateDepthFinalizeTime: (hour: number, minute: number) =>
     request<{ hour: number; minute: number }>('/api/settings/preferences/depth-finalize-time', {
       method: 'PUT',
@@ -3135,6 +3095,7 @@ export const api = {
     date_param?: string | null;
     time_field?: string | null;
     auth?: ExtPullAuth;
+    timeout_seconds?: number;
   }) =>
     request<{ status: string; pull: PullConfig }>(
       `/api/ext-data/${id}/pull`,
@@ -3154,23 +3115,24 @@ export const api = {
       { method: 'PUT', body: JSON.stringify({ key }) },
     ),
 
-  extDataPullTest: (id: string) =>
+  extDataPullTest: (id: string, timeoutSeconds?: number) =>
     request<{ status: string; total_rows: number; preview: Record<string, unknown>[]; has_symbol: boolean }>(
       `/api/ext-data/${id}/pull/test`,
-      { method: 'POST' },
+      { method: 'POST', timeoutMs: extPullTimeoutMs(timeoutSeconds) },
     ),
 
-  extDataPullRun: (id: string) =>
+  extDataPullRun: (id: string, timeoutSeconds?: number) =>
     request<{ status: string; rows: number; date: string }>(
       `/api/ext-data/${id}/pull/run`,
-      { method: 'POST' },
+      { method: 'POST', timeoutMs: extPullTimeoutMs(timeoutSeconds) },
     ),
 
-  /** 历史回补: 按本地交易日逐日拉取写入 timeseries 分区 (需 pull.date_param) */
-  extDataBackfill: (id: string, start: string, end: string) =>
+  /** 历史回补: 按本地交易日逐日拉取写入 timeseries 分区 (需 pull.date_param)。
+   *  timeoutMs 由调用方按 天数×单日超时 估算传入 (服务端逐日串行, 总耗时随天数线性)。 */
+  extDataBackfill: (id: string, start: string, end: string, timeoutMs?: number) =>
     request<ExtDataBackfillResult>(
       `/api/ext-data/${encodeURIComponent(id)}/backfill?start=${start}&end=${end}`,
-      { method: 'POST' },
+      { method: 'POST', timeoutMs: timeoutMs ?? 600_000 },
     ),
 
   // 内置预设 (概念/行业) 手动获取数据: 走结构转换, 保证 schema 一致
@@ -3193,6 +3155,7 @@ export const api = {
     request<ExtDataDetectUrlResult>('/api/ext-data/detect-url', {
       method: 'POST',
       body: JSON.stringify(body),
+      timeoutMs: extPullTimeoutMs(body.timeout_seconds),
     }),
 
   extDataFixSymbol: (id: string) =>
@@ -3263,7 +3226,7 @@ export const api = {
    * 用 ReadableStream 解析(而非 SSE EventSource),支持 POST body 且更简单。
    */
   async *financialAnalyzeStream(symbol: string, focus?: string): AsyncGenerator<{
-    type: 'meta' | 'delta' | 'error' | 'done'
+    type: 'meta' | 'delta' | 'error' | 'done' | 'ping'
     symbol?: string
     summary?: string
     periods?: number
@@ -3334,7 +3297,7 @@ export const api = {
    * meta 里额外带 levels(关键价位)供图表回放。
    */
   async *stockAnalyzeStream(symbol: string, focus?: string): AsyncGenerator<{
-    type: 'meta' | 'delta' | 'error' | 'done'
+    type: 'meta' | 'delta' | 'error' | 'done' | 'ping'
     symbol?: string
     summary?: string
     levels?: Record<LevelType, PriceLevel[]>
@@ -3409,7 +3372,7 @@ export const api = {
    * meta 里带 as_of / emotion_score / emotion_label / summary,供前端先渲染信号灯。
    */
   async *reviewStream(asOf?: string, focus?: string): AsyncGenerator<{
-    type: 'meta' | 'delta' | 'error' | 'done'
+    type: 'meta' | 'delta' | 'error' | 'done' | 'ping'
     as_of?: string
     emotion_score?: number
     emotion_label?: string
@@ -3453,7 +3416,7 @@ export const api = {
 
   /** AI 概念轮动分析 — 流式 NDJSON。 */
   async *rotationAnalyzeStream(days: number, focus?: string, kind?: 'concept' | 'industry', level?: number): AsyncGenerator<{
-    type: 'meta' | 'delta' | 'error' | 'done'
+    type: 'meta' | 'delta' | 'error' | 'done' | 'ping'
     days?: number
     summary?: string
     content?: string
@@ -3756,6 +3719,21 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ strategy_id: strategyId, code, name: meta?.name ?? '', description: meta?.description ?? '' }),
     }),
+
+  /** AI 迭代: 生成 v1 → 跑回测 → 诊断 → 修改 的有界闭环, 草稿已落盘 data/strategies/ai/ */
+  strategyAiIterate: (payload: {
+    name?: string
+    description?: string
+    direction?: string
+    rules?: string
+    execution_backend?: 'polars_expr' | 'matrix_native'
+    max_rounds?: number
+  }) =>
+    request<AiIterateResult>('/api/strategies/ai/iterate', {
+      method: 'POST',
+      timeoutMs: null,
+      body: JSON.stringify(payload),
+    }),
 }
 
 // ===== Pipeline =====
@@ -3895,6 +3873,8 @@ export interface PullConfig {
   /** 日内序列表时间列名 (如 "ts"): 配置后同 symbol 允许多行 (按 symbol+时间列去重), 用于集合竞价等多盘数据 */
   time_field?: string | null
   auth?: ExtPullAuth | null
+  /** 单次拉取请求超时 (秒), 默认 30 */
+  timeout_seconds?: number
 }
 
 export interface ExtDataBackfillResult {
@@ -3914,6 +3894,8 @@ export interface ExtDataDetectUrlRequest {
   body?: string
   response_path?: string
   field_map?: Record<string, string>
+  /** 探测超时 (秒), 默认 30 */
+  timeout_seconds?: number
 }
 
 export interface ExtDataDetectUrlResult {

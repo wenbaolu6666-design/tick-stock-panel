@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Wifi, Play, Loader2, X, Check, Crown, Database, RotateCcw } from 'lucide-react'
-import { api, type EndpointItem, type PluginDataSourceItem } from '@/lib/api'
+import { Wifi, Play, Loader2, X, Check, Crown } from 'lucide-react'
+import { api, type EndpointItem } from '@/lib/api'
 import { QK } from '@/lib/queryKeys'
 import { EXPERT_RANK, tierRank } from '@/lib/capability-labels'
 import { useDialogBackdrop } from '@/lib/useDialogBackdrop'
@@ -23,13 +23,6 @@ export function EndpointTestDialog({ hasKey, tierLabel, currentEndpoint, onClose
   const [results, setResults] = useState<Record<string, EpResult | null>>({})
   const [testing, setTesting] = useState<Record<string, boolean>>({})
   const [switching, setSwitching] = useState<string | null>(null)
-  const [tab, setTab] = useState<'endpoint' | 'plugins'>('endpoint')
-  const pluginsQ = useQuery({
-    queryKey: QK.dataSources,
-    queryFn: api.dataSources,
-    staleTime: 60_000,
-    enabled: tab === 'plugins',
-  })
 
   // 动态加载端点清单 —— 前端无法跨域直连 tickflow.org,走后端代理
   const { data, isLoading } = useQuery({
@@ -99,21 +92,8 @@ export function EndpointTestDialog({ hasKey, tierLabel, currentEndpoint, onClose
           {/* 顶栏 */}
           <div className="flex items-center justify-between px-5 py-3 border-b border-border shrink-0">
             <div className="flex items-center gap-2">
-              {tab === 'endpoint' ? <Wifi className="h-4 w-4 text-accent" /> : <Database className="h-4 w-4 text-accent" />}
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={() => setTab('endpoint')}
-                  className={`px-2 py-0.5 rounded text-xs font-medium transition-colors ${tab === 'endpoint' ? 'bg-accent/15 text-accent' : 'text-secondary hover:text-foreground'}`}
-                >
-                  端点测速
-                </button>
-                <button
-                  onClick={() => setTab('plugins')}
-                  className={`px-2 py-0.5 rounded text-xs font-medium transition-colors ${tab === 'plugins' ? 'bg-accent/15 text-accent' : 'text-secondary hover:text-foreground'}`}
-                >
-                  数据源连通
-                </button>
-              </div>
+              <Wifi className="h-4 w-4 text-accent" />
+              <span className="text-sm font-medium text-foreground">端点测速</span>
             </div>
             <div className="flex items-center gap-3">
               {isFree && (
@@ -121,7 +101,6 @@ export function EndpointTestDialog({ hasKey, tierLabel, currentEndpoint, onClose
               )}
               <button
                 onClick={testAll}
-                style={{ display: tab === 'endpoint' ? undefined : 'none' }}
                 disabled={isFree || anyTesting || endpoints.length === 0}
                 title={isFree ? 'Free 模式不可使用付费端点，请先配置 API Key' : undefined}
                 className="inline-flex items-center gap-1.5 px-3 py-1 rounded-btn bg-accent/15 text-accent text-xs font-medium hover:bg-accent/25 disabled:opacity-50 transition-colors"
@@ -152,23 +131,7 @@ export function EndpointTestDialog({ hasKey, tierLabel, currentEndpoint, onClose
             </div>
           )}
 
-          {tab === 'plugins' ? (
-            <div className="p-4 space-y-2 overflow-y-auto min-h-0">
-              {pluginsQ.isLoading ? (
-                <div className="py-10 flex items-center justify-center gap-2 text-muted">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  <span className="text-xs">加载数据源插件…</span>
-                </div>
-              ) : (
-                <div className="text-[10px] text-muted pb-1">
-                  逐个插件真实拉取 (每插件选一个数据集试拉, 不落库)。点行内按钮单独测, 或右上角全部测试。
-                </div>
-              )}
-              {(pluginsQ.data?.plugins ?? []).map(pl => (
-                <PluginTestRow key={pl.name} plugin={pl} />
-              ))}
-            </div>
-          ) : (
+          {/* 端点列表 —— 可滚动区,顶栏/当前使用/底栏始终可见 */}
           <div className="p-4 space-y-2 overflow-y-auto min-h-0">
             {isLoading ? (
               <div className="py-10 flex items-center justify-center gap-2 text-muted">
@@ -183,7 +146,6 @@ export function EndpointTestDialog({ hasKey, tierLabel, currentEndpoint, onClose
               ))
             )}
           </div>
-          )}
 
           {isFallback ? (
             <span className="text-[10px] text-warning/70">远程获取失败，显示内置列表</span>
@@ -298,66 +260,6 @@ function EpRow({ ep, result, testing, isCurrent, isFree, canUsePremium, switchin
           应用
         </button>
       ) : null}
-    </div>
-  )
-}
-
-
-function PluginTestRow({ plugin }: { plugin: PluginDataSourceItem }) {
-  const [dataset, setDataset] = useState(plugin.datasets[0] ?? '')
-  const [testing, setTesting] = useState(false)
-  const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null)
-
-  async function test() {
-    if (!dataset) return
-    setTesting(true)
-    setResult(null)
-    try {
-      const res = await api.testDataSource(plugin.name, dataset, ['000001.SZ'])
-      setResult({ ok: true, msg: `${res.rows} 行 · ${(res.columns ?? []).slice(0, 4).join(',')}` })
-    } catch (e: any) {
-      setResult({ ok: false, msg: String(e?.message ?? '失败').replace(/^自定义数据源测试失败:\s*/, '') })
-    } finally {
-      setTesting(false)
-    }
-  }
-
-  return (
-    <div className={`px-3 py-2 rounded-btn border transition-colors ${
-      result ? (result.ok ? 'border-bear/20 bg-bear/5' : 'border-danger/30 bg-danger/5') : 'border-border bg-surface'
-    }`}>
-      <div className="flex items-center gap-2">
-        <span className="text-xs font-medium text-foreground truncate">{plugin.display_name}</span>
-        <span className="text-[9px] font-mono text-muted">{plugin.name}</span>
-        {!plugin.available && (
-          <span className="text-[9px] px-1.5 py-px rounded-sm bg-warning/15 text-warning">依赖未装</span>
-        )}
-        {(plugin.enabled === false) && (
-          <span className="text-[9px] px-1.5 py-px rounded-sm bg-muted/15 text-muted">已停用</span>
-        )}
-        <div className="ml-auto flex items-center gap-1.5 shrink-0">
-          <select
-            value={dataset}
-            onChange={e => { setDataset(e.target.value); setResult(null) }}
-            className="text-[10px] bg-elevated border border-border rounded px-1 py-0.5 text-secondary max-w-[110px]"
-          >
-            {plugin.datasets.map(d => <option key={d} value={d}>{d}</option>)}
-          </select>
-          <button
-            onClick={test}
-            disabled={testing || !dataset || !plugin.available}
-            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-btn bg-accent/15 text-accent text-[10px] hover:bg-accent/25 disabled:opacity-40 transition-colors"
-          >
-            {testing ? <Loader2 className="h-2.5 w-2.5 animate-spin" /> : <Play className="h-2.5 w-2.5" />}
-            {testing ? '测试中' : '测试'}
-          </button>
-        </div>
-      </div>
-      {result && (
-        <div className={`mt-1 text-[10px] font-mono ${result.ok ? 'text-bear' : 'text-danger'}`}>
-          {result.ok ? `✓ ${result.msg}` : `✗ ${result.msg.slice(0, 120)}`}
-        </div>
-      )}
     </div>
   )
 }

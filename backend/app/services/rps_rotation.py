@@ -19,7 +19,6 @@ import time
 from datetime import date, timedelta
 
 import polars as pl
-from pathlib import Path
 
 from app.services.market_overview_builder import (
     _dimension_field,
@@ -138,27 +137,6 @@ def build_rps_rotation(repo, days: int = 12, kind: str = "concept", level: int |
     # 结果缓存: 同 (kind, level, latest) 的请求在 TTL 内直接返回。
     latest = _latest_enriched_date(repo)
     if latest is None:
-        # _enriched_history_cache 冷启动时为 None(刚重启/预热未完), 主动触发一次
-        # 历史加载, 而不是直接返回空把用户引去"配置数据源"(误导性提示)。
-        try:
-            from datetime import date as _date
-            repo.get_enriched_range(
-                _date.today() - timedelta(days=10), _date.today(),
-                columns=["symbol", "date", "change_pct"],
-            )
-        except Exception as e:  # noqa: BLE001
-            logger.debug("rps_rotation: 触发 enriched 历史加载失败: %s", e)
-        latest = _latest_enriched_date(repo)
-    if latest is None:
-        # 二次兜底: 用 enriched 分区日期取最新(历史加载被 warming 占线时)
-        try:
-            from app.services.mining_preflight import enriched_partition_dates
-            ds = enriched_partition_dates(Path(repo.store.data_dir), "stock")
-            if ds:
-                latest = ds[-1] if not isinstance(ds[-1], str) else date.fromisoformat(str(ds[-1])[:10])
-        except Exception:  # noqa: BLE001
-            pass
-    if latest is None:
         return {"dates": [], "columns": {}, "concept_count": 0}
 
     cache_key = f"{kind}|{level}|{latest.isoformat()}"
@@ -182,27 +160,6 @@ def build_rps_rotation(repo, days: int = 12, kind: str = "concept", level: int |
     df = repo.get_enriched_range(
         start, latest, columns=["symbol", "date", "change_pct"]
     )
-    if df is None or df.is_empty():
-        # 盘中实时 flush 持续 bump enriched 世代, get_enriched_range 世代失配时
-        # 一刀切返回 None; 轮动只需要历史 change_pct, 直接扫分区(等价快照)兜底。
-        try:
-            root = Path(repo.store.data_dir) / "kline_daily_enriched"
-            sel = [
-                p for p in sorted(root.glob("date=*"))
-                if start.isoformat() <= p.name.split("=")[1] <= latest.isoformat()
-            ]
-            if sel:
-                df = (
-                    pl.scan_parquet(
-                        [str(p / "part.parquet") for p in sel],
-                        missing_columns="insert",
-                        extra_columns="ignore",
-                    )
-                    .select(["symbol", "date", "change_pct"])
-                    .collect()
-                )
-        except Exception as e:  # noqa: BLE001
-            logger.debug("rps_rotation: enriched 分区兜底扫描失败: %s", e)
     if df is None or df.is_empty():
         return {"dates": [], "columns": {}, "concept_count": 0}
 

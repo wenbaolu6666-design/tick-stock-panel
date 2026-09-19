@@ -478,9 +478,6 @@ class StrategyEngine:
         meta_bf = meta.get("basic_filter")
         if meta_bf:
             bf.update(meta_bf)
-        # 标记是否纯引擎默认(策略未定制): 默认过滤按股票校准(板块前缀/价格区间),
-        # 对 ETF 等非股票宇宙不适用, 矩阵掩码层据此整体跳过
-        bf["_is_default"] = not (strat_bf or meta_bf)
 
         filter_fn = getattr(mod, "filter", None)
         filter_history_fn = getattr(mod, "filter_history", None)
@@ -1619,12 +1616,7 @@ class StrategyEngine:
                 elif b == "北交所":
                     board_exprs.append(pl.col("symbol").str.contains(r"\.BJ$"))
             if board_exprs:
-                board_match = pl.any_horizontal(board_exprs)
-                if bf.get("_is_default") and not df.select(board_match).to_series().any():
-                    # 纯引擎默认过滤按股票板块前缀校准; 当前宇宙(如 ETF 代码)零匹配
-                    # 时整条默认过滤不适用, 与回测矩阵掩码层的放行语义一致
-                    return None
-                exprs.append(board_match)
+                exprs.append(pl.any_horizontal(board_exprs))
         if exprs:
             return pl.all_horizontal(exprs)
         return None

@@ -112,42 +112,6 @@ def _fetch_instruments_by_type(instrument_type: str, asset_type_label: str) -> p
     )
 
 
-
-def _inherit_etf_ext_columns(new_df: pl.DataFrame, repo: KlineRepository) -> pl.DataFrame:
-    """合并保留既有 ETF 维表扩展列 (float_shares/total_shares/name_tencent 等).
-
-    同步源只带 4 个基础列, 直接覆盖会把腾讯回填的股本数据清零
-    (ETF 矩阵换手率推演依赖 float_shares), 与 instrument_sync 的合并保留同思路。
-    """
-    from pathlib import Path
-    try:
-        etf_dir = Path(repo.store.data_dir) / "instruments_etf"
-        files = sorted(etf_dir.glob("*.parquet"))
-        if not files:
-            return new_df
-        existing = pl.read_parquet(files[-1])
-        inherit = [c for c in ("float_shares", "total_shares", "name_tencent")
-                   if c in existing.columns]
-        if not inherit:
-            return new_df
-        # join 的 suffix 只在列名冲突时生效: 新表缺列时 f"{c}_old" 不存在,
-        # 必须在 join 前对旧表显式改名 (否则异常被吞, 裸表落盘再次清零)
-        old = existing.select(
-            ["symbol"] + [pl.col(c).alias(f"{c}__old") for c in inherit]
-        ).unique(subset=["symbol"], keep="last")
-        merged = new_df.join(old, on="symbol", how="left")
-        for c in inherit:
-            if c in new_df.columns:
-                merged = merged.with_columns(
-                    pl.coalesce([pl.col(c), pl.col(f"{c}__old")]).alias(c)
-                ).drop(f"{c}__old")
-            else:
-                merged = merged.rename({f"{c}__old": c})
-        return merged
-    except Exception as e:  # noqa: BLE001
-        logger.warning("ETF 维表扩展列合并保留失败(忽略): %s", e)
-        return new_df
-
 def sync_index_instruments(
     repo: KlineRepository,
     pull_index: bool = True,
@@ -204,7 +168,7 @@ def sync_index_instruments(
     if etf_parts:
         etf_inst = pl.concat(etf_parts, how="diagonal_relaxed").unique(subset=["symbol"], keep="last").sort("symbol")
         if not etf_inst.is_empty():
-            repo.save_etf_instruments(_inherit_etf_ext_columns(etf_inst, repo))
+            repo.save_etf_instruments(etf_inst)
             total += etf_inst.height
 
     if total == 0:
@@ -220,7 +184,7 @@ def sync_etf_instruments(repo: KlineRepository) -> int:
     etf_df = _fetch_instruments_by_type("etf", "etf")
     if etf_df.is_empty():
         return 0
-    repo.save_etf_instruments(_inherit_etf_ext_columns(etf_df, repo))
+    repo.save_etf_instruments(etf_df)
     repo.refresh_index_views()
     return etf_df.height
 

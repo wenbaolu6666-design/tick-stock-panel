@@ -321,17 +321,11 @@ def provider_has_dataset(name: str, dataset: str) -> bool:
     """判断某个 custom 源是否配置了指定数据集。
 
     用于主流程分流: 总开关选了 custom, 但某个数据集未启用时, 该数据集回退 TickFlow。
-    兼容两种 provider 形态: custom 源用 config.datasets (GenericHTTPProvider),
-    内置插件用 datasets (plugin.yaml 声明的 dict.fromkeys)。
     """
     provider = _PROVIDERS.get((name or "").lower())
     if provider is None:
         return False
-    config = getattr(provider, "config", None)
-    datasets = config.datasets if config is not None else getattr(provider, "datasets", None)
-    if datasets is None:
-        return False
-    return dataset in datasets
+    return dataset in provider.config.datasets
 
 
 def get_config_dict(name: str) -> dict | None:
@@ -584,8 +578,6 @@ def _register_one_plugin(manifest: dict) -> None:
         "homepage": manifest.get("homepage", ""),
         "api_key_env": manifest.get("api_key_env", ""),
         "api_key_masked": _plugin_key_masked(name, manifest.get("api_key_env", "")),
-        # 数据溯源清单: [{dataset, name, desc, upstream}] — 设置页详情卡全量展示
-        "inventory": list(manifest.get("inventory", []) or []),
     }
     if not available:
         return  # 依赖没装: 不注册, 但状态已记录供 UI 显示

@@ -224,6 +224,15 @@ def ensure_tq_running(wait_seconds: float = 90.0) -> bool:
     _ENSURE_ATTEMPTED = True
     if _tdx_process_running():
         return False
+    # Race guard: autostart-all.ps1 may have JUST sent Start-Process for TdxW,
+    # but the process has not appeared in tasklist yet. Wait and recheck before
+    # double-launching (which would trigger the conflict dialog).
+    for _ in range(3):
+        time.sleep(4)
+        if _tq_alive():
+            return True
+        if _tdx_process_running():
+            return False
     exe = _find_tdx_exe()
     if exe is None:
         return False

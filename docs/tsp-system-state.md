@@ -6,7 +6,7 @@
 ## 通达信自启动链(当前 v7 + autostart-all v3 全静默)
 
 ### 启动链(2026-09-19 伪重启实测 60 秒全栈恢复)
-- 计划任务 `TSP-AutoStart`(AtLogOn, principal=PAUL\WenPaul, Interactive)
+- 计划任务 `TSP-AutoStart`(AtLogOn + SessionUnlock, principal=PAUL\WenPaul, Interactive)
   → Action: `wscript.exe autostart-silent.vbs`(UTF-16 编码, 隐藏窗口零闪现)
   → `powershell autostart-all.ps1`(v3, 互斥锁 `TSP-AutoStart-All`, 打点日志 `logs/autostart-all.log`)
   1. 启动 `E:	dx	dxw.exe`(已跑则跳过)
@@ -30,7 +30,7 @@
 ### 端到端实测(2026-09-19 18:37)
 
 ### 启动链
-- 计划任务 `TSP-AutoStart`(AtLogOn)→ `autostart-all.ps1`(互斥锁 `TSP-AutoStart-All` 防重叠)
+- 计划任务 `TSP-AutoStart`(AtLogOn + SessionUnlock)→ `autostart-all.ps1`(互斥锁 `TSP-AutoStart-All` 防重叠)
   1. 启动 `E:\tdx\tdxw.exe`(已跑则跳过),等进程出现(最多 15s)
   2. 拉起 `autostart-tdx-login.ps1`(Hidden,互斥锁 `TSP-TdxLogin-Auto`)
   3. 后端 3018(uvicorn,已在监听则跳过)

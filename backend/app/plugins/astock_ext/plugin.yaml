@@ -11,7 +11,7 @@ description: "东方财富系数据：主力资金流(分钟/日)、东财 7x24 
 homepage: "https://data.eastmoney.com/"
 inventory:
   - dataset: money_flow
-    name: "主力资金流（分钟/日）"
+    name: "主力资金流"
     desc: "当日分钟级 + 日级历史：主力/超大单/大单/中单/小单净流入（元）"
     upstream: "东财 push2 / push2his fflow kline"
   - dataset: news
@@ -43,8 +43,17 @@ inventory:
     desc: "严重异常波动股票池（待修: 缺 version=9001 参数）"
     upstream: "东财 dycalchis.eastmoney.com/price-anomaly/list"
   - dataset: limit_updown
-    name: "涨停/炸板/跌停/昨日涨停四池"
-    desc: "连板数/几天几板/封板资金/首末封板时间/炸板次数/行业（上游仅最新交易日完整）"
+    name: "涨停池"
+    desc: "当日涨停股票池"
+  - dataset: limit_updown
+    name: "跌停池"
+    desc: "当日跌停股票池"
+  - dataset: limit_updown
+    name: "炸板池"
+    desc: "当日炸板（涨停后开板）股票池"
+  - dataset: limit_updown
+    name: "昨日涨停池"
+    desc: "昨日涨停个股次日表现池"
     upstream: "东财 push2ex getTopicZTPool / ZBPool / DTPool / getYesterdayZTPool"
   - dataset: hot_list
     name: "东财人气榜"
@@ -59,6 +68,9 @@ inventory:
     desc: "行业/概念/地域 × 今日/5日/10日：主力净流入/净占比 + 超大/大/中/小单"
     upstream: "东财 push2 clist/get (t:2/t:3/t:1, f62/f184/f164 系)"
   - dataset: financial
-    name: "F10 三大报表/主要指标"
-    desc: "资产负债/利润/现金流/主要指标（按报告期, F10 口径）"
+    name: "F10 三大报表"
+    desc: "利润表/资产负债表/现金流量表"
+  - dataset: financial
+    name: "F10 主要指标"
+    desc: "财务主要指标"
     upstream: "东财 datacenter.eastmoney.com/securities RPT_F10_FINANCE_G* (source=F10)"

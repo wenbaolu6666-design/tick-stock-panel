@@ -37,8 +37,11 @@ inventory:
     desc: "转股价/溢价率/纯债价值/到期收益率/强赎回售触发价/双评级/剩余规模"
     upstream: "TQ get_kzz_info (KZZ 系列 25 字段)"
   - dataset: ipo
-    name: "新股/新债申购"
-    desc: "申购代码/日期/价格/发行市盈率/申购上限（今天及以后）"
+    name: "新股申购"
+    desc: "新股发行与申购信息"
+  - dataset: ipo
+    name: "新债申购"
+    desc: "新债发行与申购信息"
     upstream: "TQ get_ipo_info (ipo_type/ipo_date)"
   - dataset: adj_factor
     name: "除权因子（单事件）"

@@ -14,18 +14,36 @@ inventory:
     desc: "按交易日返回全部/机构榜/游资榜：涨跌幅/净买额/上榜原因/机构净买/游资聚合 hot_money_items"
     upstream: "fuyao GET /api/a-share/special-data/dragon-tiger-list"
   - dataset: limit_updown
-    name: "涨停/跌停/炸板池 + 连板天梯"
-    desc: "涨停池(连板数/封单资金/涨停原因/几天几板)、跌停池、炸板池(开板次数)、近30日连板天梯矩阵"
+    name: "涨停池"
+    desc: "当日涨停池"
+  - dataset: limit_updown
+    name: "跌停池"
+    desc: "当日跌停池"
+  - dataset: limit_updown
+    name: "炸板池"
+    desc: "当日炸板池"
+  - dataset: limit_updown
+    name: "连板天梯"
+    desc: "连板梯队矩阵"
     upstream: "fuyao GET /api/a-share/special-data/limit-up-pool / limit-down-pool / limit-break-pool / limit-up-ladder"
   - dataset: hot_list
-    name: "热股榜/飙升榜/排名走势"
-    desc: "热股榜 Top30(24h/小时)、飙升榜、历史热榜(一年内)、个股排名走势(≤1年)"
+    name: "热股榜"
+    desc: "热股榜单 Top30（24小时/小时级）"
+  - dataset: hot_list
+    name: "飙升榜"
+    desc: "热度排名飙升榜 Top30"
+  - dataset: hot_list
+    name: "排名走势"
+    desc: "个股热榜排名走势"
     upstream: "fuyao GET /api/a-share/special-data/hot-stock-list / skyrocket-list / hot-stock-list-history / hot-stock-rank-trend"
   - dataset: anomaly
     name: "个股异动原因"
     desc: "当日异动原因列表(标签过滤) + 按股票批量查询：analysis_content/keyword_list/tag_name"
     upstream: "fuyao GET /api/a-share/special-data/anomaly-analysis-list / anomaly-analysis-stock"
   - dataset: auction
-    name: "集合竞价快照 + 竞价基准"
-    desc: "竞价价格/量/额/未匹配量/量比/竞价阶段；短线风向标竞价基准(高开/放量标签)"
+    name: "集合竞价快照"
+    desc: "竞价快照"
+  - dataset: auction
+    name: "竞价基准"
+    desc: "竞价基准价"
     upstream: "fuyao GET /api/a-share/auction/snapshot / short-term-benchmark"

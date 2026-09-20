@@ -10,7 +10,7 @@ description: "同花顺网页系数据：个股盈利预测EPS/净利润(worth.h
 homepage: "https://basic.10jqka.com.cn/"
 inventory:
   - dataset: research
-    name: "盈利预测 EPS/净利润"
+    name: "盈利预测"
     desc: "个股价值分析表：未来1-3年一致预期 EPS/净利润/ROE"
     upstream: "同花顺 basic.10jqka.com.cn/new/{code}/worth.html"
   - dataset: limit_updown

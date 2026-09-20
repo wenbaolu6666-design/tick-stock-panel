@@ -45,16 +45,6 @@ import { toast } from '@/components/Toast'
 import { DataSourceEditor } from './DataSourceEditor'
 import { TickFlowKeySection, TierHelpPopover, useInvalidateTierRelated } from './Keys'
 
-const DATASET_LABEL: Record<string, string> = {
-  realtime: '实时',
-  daily: '日K',
-  minute: '分钟',
-  adj_factor: '除权',
-  depth5: '五档',
-  financial: '财务',
-  full_minute: '全量分钟',
-}
-
 /** 能力图标 (纯展示; 能力清单本身由后端注册表驱动) */
 const CAP_ICON: Record<string, React.ComponentType<{ className?: string }>> = {
   realtime: Radio,
@@ -543,43 +533,49 @@ function PluginKeyConfig({ plugin }: { plugin: PluginDataSourceItem }) {
   )
 }
 
-/** 能力芯片: 三态 — 服务中(高亮+勾) / 已适配(灰) / 档位锁定(锁, 仅 TickFlow) */
-function CapabilityChips({ caps, servingSet, isTickFlow }: {
-  caps: CapabilityRoute[]
-  servingSet: Set<string>
-  isTickFlow: boolean
-}) {
-  if (caps.length === 0) return <span className="text-[10px] text-muted/40">未声明能力</span>
-  return (
-    <div className="flex flex-wrap gap-1">
-      {caps.map(cap => {
-        const servingNow = servingSet.has(cap.id)
-        const locked = isTickFlow && !cap.tf_available
-        const cls = servingNow
-          ? 'bg-accent/15 text-accent'
-          : locked
-            ? 'bg-warning/8 text-warning/70'
-            : 'bg-elevated/60 text-muted/70'
-        const title = servingNow
-          ? `正在提供「${cap.label}」`
-          : locked
-            ? `TickFlow 需 ${tierReqText(cap.tf_tier)} · 当前档位未解锁`
-            : `已适配「${cap.label}」`
-        return (
-          <span
-            key={cap.id}
-            title={title}
-            className={`inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] leading-none ${cls}`}
-          >
-            {servingNow
-              ? <Check className="h-2.5 w-2.5" />
-              : locked ? <Lock className="h-2.5 w-2.5" /> : null}
-            {cap.label || DATASET_LABEL[cap.id] || cap.id}
-          </span>
-        )
-      })}
-    </div>
-  )
+
+/** 插件能力芯片: datasets 为基线(每个能力插槽一条, 用注册表中文名),
+ *  inventory 里同一 dataset 的多个接口各自拆条(按来源列出), serving 按 dataset 判定。 */
+function renderPluginChips(
+  plugin: PluginDataSourceItem | undefined,
+  declaredDatasets: string[],
+  servingSet: Set<string>,
+  capLabelOf: (id: string) => string,
+): React.ReactNode {
+  const chips: React.ReactNode[] = []
+  const seen = new Set<string>()
+  const chipCls = (serving: boolean) =>
+    `inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] leading-none ${
+      serving ? 'bg-accent/15 text-accent' : 'bg-elevated/60 text-muted/70'
+    }`
+  for (const [i, inv] of (plugin?.inventory ?? []).entries()) {
+    if (!inv?.name) continue
+    const serving = servingSet.has(inv.dataset)
+    chips.push(
+      <span
+        key={`inv-${inv.dataset}-${i}`}
+        title={inv.desc ? `「${inv.name}」：${inv.desc}` : `已适配「${inv.name}」`}
+        className={chipCls(serving)}
+      >
+        {serving ? <Check className="h-2.5 w-2.5" /> : null}
+        {inv.name}
+      </span>,
+    )
+    seen.add(inv.dataset)
+  }
+  for (const ds of declaredDatasets) {
+    if (seen.has(ds)) continue
+    const label = capLabelOf(ds)
+    const serving = servingSet.has(ds)
+    chips.push(
+      <span key={`ds-${ds}`} title={`「${label}」能力插槽`} className={chipCls(serving)}>
+        {serving ? <Check className="h-2.5 w-2.5" /> : null}
+        {label}
+      </span>,
+    )
+  }
+  if (chips.length === 0) return <span className="text-[10px] text-muted/40">未声明能力</span>
+  return <div className="flex flex-wrap gap-1">{chips}</div>
 }
 
 export function SettingsDataSourcesPanel({ highlight }: { highlight?: string } = {}) {
@@ -626,6 +622,7 @@ export function SettingsDataSourcesPanel({ highlight }: { highlight?: string } =
   const servingSetOf = (name: string) => new Set(servingDatasets(name))
 
   const matrixCaps = matrix.data?.capabilities ?? []
+  const capLabelOf = (id: string) => matrixCaps.find(c => c.id === id)?.label ?? id
 
   // 数据源集合/插件可用性/档位变化都会改变能力候选集 → 统一连带失效
   const invalidateSources = () => {
@@ -774,11 +771,6 @@ export function SettingsDataSourcesPanel({ highlight }: { highlight?: string } =
             const pluginUnavailable = plugin && !plugin.available
             const installing = installMut.isPending && installMut.variables === item.name
             const uninstalling = uninstallMut.isPending && uninstallMut.variables === item.name
-            const declared = new Set(item.datasets)
-            // TickFlow 展示注册表全量能力 (含档位锁定态); 其余源按声明过滤
-            const chipCaps = isTf
-              ? matrixCaps
-              : matrixCaps.filter(c => declared.has(c.id))
             return (
               <div
                 key={item.name}
@@ -817,31 +809,10 @@ export function SettingsDataSourcesPanel({ highlight }: { highlight?: string } =
                   )}
                 </div>
 
-                {/* 能力芯片: 有 inventory 按来源(接口)列中文名; 否则按能力插槽 */}
+                {/* 能力芯片: datasets 基线(中文插槽名) + inventory 的额外接口拆条 */}
                 <div className="mt-2">
-                  {plugin?.inventory && plugin.inventory.length > 0 ? (
-                    <div className="flex flex-wrap gap-1">
-                      {plugin.inventory.map((inv, i) => {
-                        const servingNow = servingSet.has(inv.dataset)
-                        return (
-                          <span
-                            key={`${inv.dataset}-${i}`}
-                            title={inv.desc ? `「${inv.name}」：${inv.desc}` : `已适配「${inv.name}」`}
-                            className={`inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] leading-none ${
-                              servingNow ? 'bg-accent/15 text-accent' : 'bg-elevated/60 text-muted/70'
-                            }`}
-                          >
-                            {servingNow ? <Check className="h-2.5 w-2.5" /> : null}
-                            {inv.name}
-                          </span>
-                        )
-                      })}
-                    </div>
-                  ) : (
-                    <CapabilityChips caps={chipCaps} servingSet={servingSet} isTickFlow={isTf} />
-                  )}
+                  {renderPluginChips(plugin, item.datasets, servingSet, capLabelOf)}
                 </div>
-
                 {/* 底部: 状态提示 + 操作 */}
                 <div className="mt-2 pt-2 border-t border-border/50 flex items-center justify-between gap-2 min-h-[22px]">
                   <span className="text-[10px] text-muted/50 truncate min-w-0">
@@ -1049,30 +1020,11 @@ function PluginDetail({ plugin, isActive, matrixCaps, servingSet }: {
           </div>
           {plugin.description && <p className="text-xs text-secondary leading-relaxed">{plugin.description}</p>}
           <div className="mt-2">
-            {plugin.inventory && plugin.inventory.length > 0 ? (
-              <div className="flex flex-wrap gap-1">
-                {plugin.inventory.map((inv, i) => {
-                  const servingNow = servingSet.has(inv.dataset)
-                  return (
-                    <span
-                      key={`${inv.dataset}-${i}`}
-                      title={inv.desc ? `「${inv.name}」：${inv.desc}` : `已适配「${inv.name}」`}
-                      className={`inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] leading-none ${
-                        servingNow ? 'bg-accent/15 text-accent' : 'bg-elevated/60 text-muted/70'
-                      }`}
-                    >
-                      {servingNow ? <Check className="h-2.5 w-2.5" /> : null}
-                      {inv.name}
-                    </span>
-                  )
-                })}
-              </div>
-            ) : (
-              <CapabilityChips
-                caps={matrixCaps.filter(c => declared.has(c.id))}
-                servingSet={servingSet}
-                isTickFlow={false}
-              />
+            {renderPluginChips(
+              plugin,
+              [...declared],
+              servingSet,
+              (id) => matrixCaps.find(c => c.id === id)?.label ?? id,
             )}
           </div>
         </div>

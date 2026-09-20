@@ -18,6 +18,6 @@ inventory:
     desc: "深交所互动易：投资者提问与上市公司回复（待修: 需调 keyWord 参数）"
     upstream: "深交所互动易 irm.cninfo.com.cn/newircs/company/question"
   - dataset: research
-    name: "券商评级/目标价"
+    name: "券商评级"
     desc: "当日全市场评级记录：机构/评级/目标价（字段透传 raw 列）"
     upstream: "巨潮 webapi.cninfo.com.cn/api/sysapi/p_sysapi1089 (Accept-Enckey = base64(AES-128-CBC(unix秒)))"

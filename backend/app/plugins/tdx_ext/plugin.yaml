@@ -49,6 +49,12 @@ inventory:
     desc: "大宗成交价/量/额"
     upstream: "TQ get_gpjy_value GP4"
   - dataset: corp_events
-    name: "公司事件（解禁/户数/分红）"
-    desc: "解禁日与数量、股东户数、分红送转（kind 列区分）"
+    name: "限售解禁"
+    desc: "解禁日与解禁数量"
+  - dataset: corp_events
+    name: "股东户数"
+    desc: "股东户数变化"
+  - dataset: corp_events
+    name: "分红送转"
+    desc: "分红送转事件"
     upstream: "TQ get_gp_one_data GO26/GO27 + get_gpjy_value GP1/GP30"

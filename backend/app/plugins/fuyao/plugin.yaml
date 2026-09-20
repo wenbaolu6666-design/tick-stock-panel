@@ -13,6 +13,23 @@ description: "同花顺官方 REST 数据 API。A 股实时快照、日K(原始�
 install_hint: "点击卡片中的输入框配置 API Key(https://fuyao.aicubes.cn 申请),或在 .env 中配置 FUYAO_API_KEY"
 homepage: "https://fuyao.aicubes.cn"
 inventory:
+  - dataset: realtime
+    name: "实时行情"
+    desc: "全市场实时行情快照(分页 100/页, 含端口节流)"
+    upstream: "GET /api/a-share/prices/snapshot + dumps"
+  - dataset: daily
+    name: "日K"
+    desc: "历史日K: 近端 10d dump, 深窗口 10 年全量 dump 筛选"
+    upstream: "GET /api/a-share/prices/historical + dumps"
+  - dataset: adj_factor
+    name: "除权因子"
+    desc: "复权因子事件流 + 本地日K推导, 涨跌停自检"
+    upstream: "dump adjustment-factors"
+  - dataset: financial
+    name: "财务数据"
+    desc: "利润表/资产负债表/现金流量表 + 财务指标(bps 由估值反推)"
+    upstream: "GET /api/a-share/financials/*"
   - dataset: fund
     name: "基金净值"
     desc: "基金单位净值序列 (同花顺官方 /api/fund/performance/nav, 支持 OTC/ETF/LOF/REITs, thscode 带市场后缀)"
+    upstream: "GET /api/fund/performance/nav"

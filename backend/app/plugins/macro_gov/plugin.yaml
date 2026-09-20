@@ -10,8 +10,11 @@ description: "官方宏观发布数据：国家统计局 PMI（制造业/非制�
 homepage: "https://www.stats.gov.cn/sj/zxfb/"
 inventory:
   - dataset: macro
-    name: "PMI 制造业/非制造业"
-    desc: "最新月制造业 PMI 与非制造业商务活动指数（发布渠道页面抓取，脆弱）"
+    name: "PMI 制造业"
+    desc: "制造业PMI"
+  - dataset: macro
+    name: "PMI 非制造业"
+    desc: "非制造业PMI"
     upstream: "国家统计局 www.stats.gov.cn/sj/zxfb"
   - dataset: macro
     name: "社会融资规模增量"

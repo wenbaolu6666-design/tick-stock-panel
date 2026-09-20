@@ -1727,6 +1727,7 @@ export interface CapabilityRoute {
   default: string
   tf_tier: string                                  // TickFlow 所需最低订阅档位
   tf_available: boolean                            // 当前 TickFlow 档位是否提供该能力
+  locked?: boolean                                 // 锁死能力: 路由不可切换 (如日K=通达信本地)
   usable: boolean                                  // 生效源当前能否真正提供 (各页能力门控的统一判定)
   current: string                                  // 原始偏好值
   current_display: string

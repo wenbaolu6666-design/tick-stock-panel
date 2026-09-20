@@ -78,6 +78,19 @@ AI 代理规则见其第 13 节),二者不互相替代。
 6. 改动提交推送 personal;同步更新 `docs/tsp-system-state.md` 与交接文档。
 7. 提交/推送/删除文件/数据迁移等操作按 CONTRIBUTING 第 13 节,先取得用户确认。
 
+## 数据口径与同步(用户 2026-09-20 决定)
+
+- **日线锁死通达信本地**: `daily_data_provider` 恒为 `tdx_local`(getter 硬编码,
+  注册表 `locked: True`, 前端禁切)。解除需改代码并同步本文档。
+- **统一口径契约**: 所有日K provider 输出**不复权原始价**进库(实测 5 源均遵守,
+  tdx_quant `dividend_type=none`); 前复权在 enriched 层由 adj_factor 统一推导 —
+  切换数据源不会产生口径分叉。
+- **vipdoc 自动同步守护** (`app/services/vipdoc_watch.py`): 每 30 分钟 + 启动后
+  120s 探测 `E:	dxipdoc` 代表股 .day 最新日期, 超过库最新即自动跑盘后管道
+  增量(override_start_date=库最新+1)。百度盘下载/盘后数据下载后无需手动同步。
+- **存储两层**: vipdoc(源, 通达信客户端自用, 只读) + `data/` parquet 库(TSP 查询/
+  计算层, 压缩后更小; enriched/回测/策略只读库, 删库会瘫痪计算链)。
+
 ## 已知雷区速查(详见 docs/codex-handoff.md「已知雷区」节)
 
 - duckdb 同连接多线程 GIL 竞态 → 启动期禁并发查库(warmup 已延迟 90s,勿回退)。

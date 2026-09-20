@@ -1267,6 +1267,11 @@ def start_scheduler(repo: KlineRepository, capset: CapabilitySet) -> AsyncIOSche
         logger.info("scheduled_review enabled @%02d:%02d mon-fri",
                     review_sched["hour"], review_sched["minute"])
 
+    # vipdoc 增量同步守护: 日线锁死 tdx_local 后, 百度盘下载/盘后数据下载
+    # 更新 vipdoc 时自动增量入库 (每 30 分钟探测 + 启动后延迟一次)
+    from app.services.vipdoc_watch import register_vipdoc_watch
+    register_vipdoc_watch(scheduler, repo, capset)
+
     scheduler.start()
     logger.info("scheduler started; instruments@%02d:%02d, pipeline@%02d:%02d, depth@%02d:%02d mon-fri",
                 inst_sched["hour"], inst_sched["minute"], sched["hour"], sched["minute"],

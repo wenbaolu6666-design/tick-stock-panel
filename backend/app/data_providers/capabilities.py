@@ -31,8 +31,10 @@ CAPABILITY_REGISTRY: list[dict] = [
         "label": "日K",
         "desc": "历史日K数据",
         "field": "daily_data_provider",
-        "default": "tickflow",
+        "default": "tdx_local",
         "tf_tier": "none",
+        # 锁死: 唯一日线源为通达信本地(vipdoc), 路由不可切换; getter 亦恒定返回
+        "locked": True,
     },
     {
         "id": "adj_factor",
@@ -216,6 +218,7 @@ def build_capability_matrix(current: dict[str, str], tickflow_tier: str = "none"
             "default": cap["default"],
             "tf_tier": cap["tf_tier"],
             "tf_available": tf_available,
+            "locked": bool(cap.get("locked")),
             "usable": usable,
             "current": effective,
             "current_display": _display_of(sources, effective),

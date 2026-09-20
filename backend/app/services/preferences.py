@@ -271,8 +271,10 @@ def _allowed_data_providers() -> set[str]:
 
 
 def get_daily_data_provider() -> str:
-    provider = str(load().get("daily_data_provider", "tickflow") or "tickflow").lower()
-    return provider if provider in _allowed_data_providers() else "tickflow"
+    # 日线锁死通达信本地 (2026-09-20 用户决定): vipdoc 为唯一日线源, API 源日K
+    # 不再路由/覆盖; 新增日线数据由 vipdoc 增量同步守护自动入库 (见 tickflow.scheduler)。
+    # 解除锁定需改回读 preferences 的逻辑, 并同步更新 docs/tsp-system-state.md。
+    return "tdx_local"
 
 
 def get_adj_factor_provider() -> str:

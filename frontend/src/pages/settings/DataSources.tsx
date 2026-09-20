@@ -213,13 +213,16 @@ function CapabilityCard({ cap, pendingKey, onSelect }: {
             <button
               key={c.name}
               type="button"
-              disabled={pendingKey != null}
+              disabled={pendingKey != null || cap.locked === true}
               onClick={() => cap.field != null && onSelect(cap.field, c.name)}
-              title={`「${cap.label}」由 ${c.display} 提供`}
+              title={cap.locked === true
+                ? `「${cap.label}」已锁死为 ${c.display}, 不可切换`
+                : `「${cap.label}」由 ${c.display} 提供`}
               className={tagCls(active)}
             >
               {busy(c.name) && <Loader2 className="h-2.5 w-2.5 animate-spin" />}
               {c.display}
+              {cap.locked === true && <Lock className="h-2.5 w-2.5" />}
             </button>
           )
         })}

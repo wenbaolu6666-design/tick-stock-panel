@@ -1,14 +1,18 @@
-name: kpl_ext
+﻿name: kpl_ext
 display_name: 开盘啦（情绪/板块强度）
 runtime: python
 entry: app.plugins.kpl_ext.provider:KaiPanLaProvider
-description: "开盘啦 App 公开 HTTP 接口: 板块强度排行(RealRankingInfo, 免Token)、盘口/爆发原因/人气榜(Token)。数据为情绪短线核心源。"
+description: "开盘啦 App 公开 HTTP 接口: 板块强度排行/子板块谱系/成分股/分时量额(sector, RealRankingInfo 免Token)、板块异动原因(anomaly, BKFenShiZhiBo 含题材归因与核心异动标记, 开盘啦独家)、板块盘口/日基面(Getter)。数据为情绪短线核心源。"
 homepage: "https://apphis.longhuvip.com"
 api_key_env: ""
 check: app.plugins.kpl_ext.provider:availability
-datasets: [sector]
+datasets: [sector, anomaly]
 inventory:
   - dataset: sector
     name: "板块强度排行"
     desc: "开盘啦板块强度/涨跌幅/大单净额 排行 (概念+行业)"
     upstream: "POST https://apphis.longhuvip.com/w1/api/index.php a=RealRankingInfo c=ZhiShuRanking"
+  - dataset: anomaly
+    name: "板块异动原因"
+    desc: "板块当日异动个股与题材归因(BKFenShiZhiBo: Reason 题材/板高/IsImportant 核心异动, 开盘啦独家视角)"
+    upstream: "POST https://apphis.longhuvip.com/w1/api/index.php a=BKFenShiZhiBo c=HisConceptionPoint"

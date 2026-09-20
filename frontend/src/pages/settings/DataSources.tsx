@@ -1096,10 +1096,10 @@ function PluginDetail({ plugin, isActive, matrixCaps, servingSet }: {
           )}
         </div>
 
-        {/* 能力适配表: 全部能力 × 该源适配状态 (样式对齐 TickFlow 能力档位表) */}
+        {/* 能力适配表: 只列该源声明/服务中的能力 (全部能力由上方插槽卡承载, 不重复) */}
         <div className="min-w-0">
           <div className="rounded-lg border border-border/60 bg-elevated/20 divide-y divide-border/50">
-            {matrixCaps.map(cap => {
+            {matrixCaps.filter(cap => servingSet.has(cap.id) || declared.has(cap.id)).map(cap => {
               const Icon = CAP_ICON[cap.id] ?? Database
               const serving = servingSet.has(cap.id)
               const declaredCap = declared.has(cap.id)

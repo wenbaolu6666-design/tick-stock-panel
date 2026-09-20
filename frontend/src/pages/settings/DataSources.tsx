@@ -65,6 +65,9 @@ const CAP_ICON: Record<string, React.ComponentType<{ className?: string }>> = {
   financial: Landmark,
 }
 
+/** TickFlow 面板显隐开关: 用户使用自有插件数据源, 第三方档位介绍卡默认隐藏 (改回 true 即恢复) */
+const SHOW_TICKFLOW_PANEL = false
+
 /** TickFlow 档位要求文本: none → 全档位, 其余 → starter+ 形式 */
 function tierReqText(tier: string): string {
   return tier === 'none' ? '全档位' : `${tier}+`
@@ -756,7 +759,7 @@ export function SettingsDataSourcesPanel({ highlight }: { highlight?: string } =
 
         {/* 数据源卡片 - 横向网格 (配置入口) */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
-          {allItems.map(item => {
+          {allItems.filter(item => SHOW_TICKFLOW_PANEL || item.name !== 'tickflow').map(item => {
             const servingSet = servingSetOf(item.name)
             const isTf = item.name === 'tickflow'
             if (isTf) {
@@ -921,9 +924,9 @@ export function SettingsDataSourcesPanel({ highlight }: { highlight?: string } =
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.15 }}
         >
-          {selected === 'tickflow' ? (
+          {SHOW_TICKFLOW_PANEL && selected === 'tickflow' ? (
             <TickFlowDetail active={servingDatasets('tickflow').length > 0} matrix={matrix.data} />
-          ) : selected === '__new__' || customNames.has(selected) ? (
+          ) : selected !== 'tickflow' && (selected === '__new__' || customNames.has(selected)) ? (
             selected === '__new__' ? (
               <DataSourceEditor
                 key={selected}

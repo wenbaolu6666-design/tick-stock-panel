@@ -574,7 +574,7 @@ function CapabilityChips({ caps, servingSet, isTickFlow }: {
             {servingNow
               ? <Check className="h-2.5 w-2.5" />
               : locked ? <Lock className="h-2.5 w-2.5" /> : null}
-            {DATASET_LABEL[cap.id] || cap.id}
+            {cap.label || DATASET_LABEL[cap.id] || cap.id}
           </span>
         )
       })}

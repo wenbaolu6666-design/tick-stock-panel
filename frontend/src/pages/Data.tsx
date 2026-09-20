@@ -679,13 +679,13 @@ export function Data() {
       />
 
       <div className="mx-auto px-8 py-6 space-y-6 max-w-6xl">
-        {/* 无 Key 提示 —— 非阻断: 历史日K走免费通道, 实时等能力取决于所选数据源 */}
+        {/* 无 Key 提示 —— 非阻断: 本地数据不受影响, 能力路由见数据源设置 */}
         {isNoKey && (
           <div className="flex items-center gap-2 rounded-card border border-border bg-elevated/40 px-3 py-2 text-xs">
             <Info className="h-4 w-4 shrink-0 text-muted" />
             <span className="text-secondary leading-relaxed">
-              当前无需 API Key,历史日K将使用免费通道获取。
-              实时行情、分钟K等能力取决于所选数据源,可在
+              未配置 TickFlow API Key,不影响已有本地数据;各能力按数据源路由获取
+              (通达信本地/fuyao 等)。实时行情、分钟K等能力取决于所选数据源,可在
               <Link to="/settings?tab=data-sources&highlight=data-sources" className="mx-0.5 font-medium text-accent hover:underline">
                 数据源设置
               </Link>

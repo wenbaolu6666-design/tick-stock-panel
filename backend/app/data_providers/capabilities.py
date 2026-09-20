@@ -1,4 +1,4 @@
-"""能力注册表与能力路由矩阵 — 数据集维度的单一权威定义。
+﻿"""能力注册表与能力路由矩阵 — 数据集维度的单一权威定义。
 
 能力 (capability) = 一个标准化数据集 (CONTRIBUTING「数据源插件化要求」):
 daily / adj_factor / realtime / minute / depth5 / financial (注册表顺序即设置页卡片顺序)。注册表集中声明每个
@@ -29,7 +29,7 @@ CAPABILITY_REGISTRY: list[dict] = [
     {
         "id": "daily",
         "label": "日K",
-        "desc": "历史K线与实时覆写",
+        "desc": "历史日K数据",
         "field": "daily_data_provider",
         "default": "tickflow",
         "tf_tier": "none",
@@ -55,7 +55,7 @@ CAPABILITY_REGISTRY: list[dict] = [
     {
         "id": "minute",
         "label": "分钟K",
-        "desc": "分时图与分钟回测",
+        "desc": "分钟K数据",
         "field": "minute_data_provider",
         "default": "tickflow",
         "tf_tier": "pro",
@@ -63,7 +63,7 @@ CAPABILITY_REGISTRY: list[dict] = [
     {
         "id": "depth5",
         "label": "五档盘口",
-        "desc": "连板梯队封单与盘口深度",
+        "desc": "五档盘口深度",
         "field": "depth5_data_provider",
         "default": "tickflow",
         "tf_tier": "pro",
@@ -71,7 +71,7 @@ CAPABILITY_REGISTRY: list[dict] = [
     {
         "id": "financial",
         "label": "财务数据",
-        "desc": "财务指标与三大报表",
+        "desc": "财务数据",
         "field": "financial_data_provider",
         "default": "tickflow",
         "tf_tier": "expert",
@@ -79,7 +79,7 @@ CAPABILITY_REGISTRY: list[dict] = [
     {
         "id": "full_minute",
         "label": "全量分钟",
-        "desc": "盘中全市场当日分钟落盘 (冷启动全天 + 标的池增量)",
+        "desc": "全市场当日分钟落盘",
         "field": "full_minute_data_provider",
         "default": "tickflow",
         "tf_tier": "expert",
@@ -87,38 +87,32 @@ CAPABILITY_REGISTRY: list[dict] = [
         # (插件实现 get_intraday_batch / 可选 get_intraday_latest, YAML 仅修复轮)
     },
 
-    {'id': 'news', 'label': '新闻舆情', 'desc': '个股新闻与市场资讯', 'field': 'news_data_provider', 'default': 'tickflow', 'tf_tier': 'starter'},
-    {'id': 'dragon_tiger', 'label': '龙虎榜', 'desc': '龙虎榜与大宗交易数据', 'field': 'dragon_tiger_data_provider', 'default': 'tickflow', 'tf_tier': 'starter'},
-    {'id': 'limit_updown', 'label': '涨跌停', 'desc': '涨跌停个股与封单数据', 'field': 'limit_updown_data_provider', 'default': 'tickflow', 'tf_tier': 'starter'},
-    {'id': 'market_overview', 'label': '市场总览', 'desc': '涨停封单/陆股通/两融余额/涨跌家数', 'field': 'market_overview_data_provider', 'default': 'tickflow', 'tf_tier': 'starter'},
-    {'id': 'consensus', 'label': '一致预期', 'desc': '机构预测/业绩预告/解禁日历', 'field': 'consensus_data_provider', 'default': 'tickflow', 'tf_tier': 'starter'},
-    {'id': 'sector', 'label': '板块数据', 'desc': '板块行情与成份股', 'field': 'sector_data_provider', 'default': 'tickflow', 'tf_tier': 'starter'},
-    {'id': 'hot_list', 'label': '同花顺热榜', 'desc': '热股榜/飙升榜/排名趋势', 'field': 'hot_list_data_provider', 'default': 'tickflow', 'tf_tier': 'starter'},
+    {'id': 'news', 'label': '新闻舆情', 'desc': '个股新闻资讯', 'field': 'news_data_provider', 'default': 'tickflow', 'tf_tier': 'starter'},
+    {'id': 'dragon_tiger', 'label': '龙虎榜', 'desc': '龙虎榜数据', 'field': 'dragon_tiger_data_provider', 'default': 'tickflow', 'tf_tier': 'starter'},
+    {'id': 'limit_updown', 'label': '涨跌停', 'desc': '涨跌停数据', 'field': 'limit_updown_data_provider', 'default': 'tickflow', 'tf_tier': 'starter'},
+    {'id': 'market_overview', 'label': '市场总览', 'desc': '市场全景统计', 'field': 'market_overview_data_provider', 'default': 'tickflow', 'tf_tier': 'starter'},
+    {'id': 'consensus', 'label': '一致预期', 'desc': '一致预期数据', 'field': 'consensus_data_provider', 'default': 'tickflow', 'tf_tier': 'starter'},
+    {'id': 'sector', 'label': '板块数据', 'desc': '板块行情数据', 'field': 'sector_data_provider', 'default': 'tickflow', 'tf_tier': 'starter'},
+    {'id': 'hot_list', 'label': '同花顺热榜', 'desc': '热股榜单数据', 'field': 'hot_list_data_provider', 'default': 'tickflow', 'tf_tier': 'starter'},
     {'id': 'anomaly', 'label': '异动原因', 'desc': '个股异动原因解读', 'field': 'anomaly_data_provider', 'default': 'tickflow', 'tf_tier': 'starter'},
-    {'id': 'auction', 'label': '集合竞价', 'desc': '竞价快照与短线风向标', 'field': 'auction_data_provider', 'default': 'tickflow', 'tf_tier': 'starter'},
-    {'id': 'money_flow', 'label': '资金流向', 'desc': '个股主力资金流与北向资金', 'field': 'money_flow_data_provider', 'default': 'tickflow', 'tf_tier': 'starter'},
-    {'id': 'margin', 'label': '融资融券', 'desc': '个股两融余额与买卖明细', 'field': 'margin_data_provider', 'default': 'tickflow', 'tf_tier': 'starter'},
-    {'id': 'block_trade', 'label': '大宗交易', 'desc': '大宗成交记录与折溢价', 'field': 'block_trade_data_provider', 'default': 'tickflow', 'tf_tier': 'starter'},
-    {'id': 'chip', 'label': '筹码分布', 'desc': '获利比例/平均成本/成本区间(本地推演)', 'field': 'chip_data_provider', 'default': 'tickflow', 'tf_tier': 'starter'},
-    {'id': 'corp_events', 'label': '公司事件', 'desc': '限售解禁/分红送转/股东户数', 'field': 'corp_events_data_provider', 'default': 'tickflow', 'tf_tier': 'starter'},
-    {'id': 'research', 'label': '研报', 'desc': '东财个股研报与同花顺盈利预测', 'field': 'research_data_provider', 'default': 'tickflow', 'tf_tier': 'starter'},
-    {'id': 'announcements', 'label': '公告互动', 'desc': '巨潮公告与互动易问答', 'field': 'announcements_data_provider', 'default': 'tickflow', 'tf_tier': 'starter'},
-    {'id': 'macro', 'label': '宏观', 'desc': 'PMI与社融等宏观数据', 'field': 'macro_data_provider', 'default': 'tickflow', 'tf_tier': 'starter'},
-    {'id': 'options', 'label': 'ETF期权', 'desc': '期权T型报价与希腊字母', 'field': 'options_data_provider', 'default': 'tickflow', 'tf_tier': 'starter'},
-    {'id': 'valuation', 'label': '估值', 'desc': 'PE/PB/PS/PCF 与股息率等估值指标', 'field': 'valuation_data_provider', 'default': 'tickflow', 'tf_tier': 'starter'},
-    {'id': 'kzz', 'label': '可转债', 'desc': '转债条款/转股价/溢价率/强赎回售', 'field': 'kzz_data_provider', 'default': 'tickflow', 'tf_tier': 'starter'},
-    {'id': 'ipo', 'label': '新股申购', 'desc': '新股新债发行与申购信息', 'field': 'ipo_data_provider', 'default': 'tickflow', 'tf_tier': 'starter'},
-    {'id': 'survey', 'label': '机构调研', 'desc': '机构调研次数与接待家数', 'field': 'survey_data_provider', 'default': 'tickflow', 'tf_tier': 'starter'},
-    {'id': 'pledge', 'label': '股权质押', 'desc': '质押数量/质押比例', 'field': 'pledge_data_provider', 'default': 'tickflow', 'tf_tier': 'starter'},
-    {'id': 'score', 'label': '综合评分', 'desc': '股票综合评分与评级系数', 'field': 'score_data_provider', 'default': 'tickflow', 'tf_tier': 'starter'},
-    {'id': 'fund', 'label': '基金数据', 'desc': '基金净值/持仓/经理/分红等', 'field': 'fund_data_provider', 'default': 'tickflow', 'tf_tier': 'starter'},
-    {
-        "id": "minute_history",
-        "label": "1分钟历史K线",
-        "description": "本地通达信 1 分钟历史数据 (2020-2025)",
-        "datasets": ["minute_history"],
-        "default": "tdx_local",
-    },
+    {'id': 'auction', 'label': '集合竞价', 'desc': '集合竞价快照', 'field': 'auction_data_provider', 'default': 'tickflow', 'tf_tier': 'starter'},
+    {'id': 'money_flow', 'label': '资金流向', 'desc': '个股资金流', 'field': 'money_flow_data_provider', 'default': 'tickflow', 'tf_tier': 'starter'},
+    {'id': 'margin', 'label': '融资融券', 'desc': '两融数据', 'field': 'margin_data_provider', 'default': 'tickflow', 'tf_tier': 'starter'},
+    {'id': 'block_trade', 'label': '大宗交易', 'desc': '大宗交易数据', 'field': 'block_trade_data_provider', 'default': 'tickflow', 'tf_tier': 'starter'},
+    {'id': 'chip', 'label': '筹码分布', 'desc': '筹码分布（本地推演）', 'field': 'chip_data_provider', 'default': 'tickflow', 'tf_tier': 'starter'},
+    {'id': 'corp_events', 'label': '公司事件', 'desc': '公司事件数据', 'field': 'corp_events_data_provider', 'default': 'tickflow', 'tf_tier': 'starter'},
+    {'id': 'research', 'label': '研报', 'desc': '盈利预测数据', 'field': 'research_data_provider', 'default': 'tickflow', 'tf_tier': 'starter'},
+    {'id': 'announcements', 'label': '公告互动', 'desc': '公告互动数据', 'field': 'announcements_data_provider', 'default': 'tickflow', 'tf_tier': 'starter'},
+    {'id': 'macro', 'label': '宏观', 'desc': '宏观数据', 'field': 'macro_data_provider', 'default': 'tickflow', 'tf_tier': 'starter'},
+    {'id': 'options', 'label': 'ETF期权', 'desc': '期权行情数据', 'field': 'options_data_provider', 'default': 'tickflow', 'tf_tier': 'starter'},
+    {'id': 'valuation', 'label': '估值', 'desc': '估值指标', 'field': 'valuation_data_provider', 'default': 'tickflow', 'tf_tier': 'starter'},
+    {'id': 'kzz', 'label': '可转债', 'desc': '可转债数据', 'field': 'kzz_data_provider', 'default': 'tickflow', 'tf_tier': 'starter'},
+    {'id': 'ipo', 'label': '新股申购', 'desc': '新股申购', 'field': 'ipo_data_provider', 'default': 'tickflow', 'tf_tier': 'starter'},
+    {'id': 'survey', 'label': '机构调研', 'desc': '机构调研数据', 'field': 'survey_data_provider', 'default': 'tickflow', 'tf_tier': 'starter'},
+    {'id': 'pledge', 'label': '股权质押', 'desc': '股权质押数据', 'field': 'pledge_data_provider', 'default': 'tickflow', 'tf_tier': 'starter'},
+    {'id': 'score', 'label': '综合评分', 'desc': '综合评分', 'field': 'score_data_provider', 'default': 'tickflow', 'tf_tier': 'starter'},
+    {'id': 'fund', 'label': '基金数据', 'desc': '基金数据', 'field': 'fund_data_provider', 'default': 'tickflow', 'tf_tier': 'starter'},
+    {'id': 'minute_history', 'label': '1分钟历史K线', 'desc': '本地通达信 1 分钟历史数据 (2020-2025)', 'field': 'minute_history_data_provider', 'default': 'tdx_local', 'tf_tier': 'starter'},
 ]
 
 _TICKFLOW_CANDIDATE = {

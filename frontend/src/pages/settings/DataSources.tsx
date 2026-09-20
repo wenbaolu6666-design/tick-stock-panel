@@ -817,9 +817,29 @@ export function SettingsDataSourcesPanel({ highlight }: { highlight?: string } =
                   )}
                 </div>
 
-                {/* 能力芯片: 服务中 / 已适配 / 档位锁定 */}
+                {/* 能力芯片: 有 inventory 按来源(接口)列中文名; 否则按能力插槽 */}
                 <div className="mt-2">
-                  <CapabilityChips caps={chipCaps} servingSet={servingSet} isTickFlow={isTf} />
+                  {plugin?.inventory && plugin.inventory.length > 0 ? (
+                    <div className="flex flex-wrap gap-1">
+                      {plugin.inventory.map((inv, i) => {
+                        const servingNow = servingSet.has(inv.dataset)
+                        return (
+                          <span
+                            key={`${inv.dataset}-${i}`}
+                            title={inv.desc ? `「${inv.name}」：${inv.desc}` : `已适配「${inv.name}」`}
+                            className={`inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] leading-none ${
+                              servingNow ? 'bg-accent/15 text-accent' : 'bg-elevated/60 text-muted/70'
+                            }`}
+                          >
+                            {servingNow ? <Check className="h-2.5 w-2.5" /> : null}
+                            {inv.name}
+                          </span>
+                        )
+                      })}
+                    </div>
+                  ) : (
+                    <CapabilityChips caps={chipCaps} servingSet={servingSet} isTickFlow={isTf} />
+                  )}
                 </div>
 
                 {/* 底部: 状态提示 + 操作 */}
@@ -1029,11 +1049,31 @@ function PluginDetail({ plugin, isActive, matrixCaps, servingSet }: {
           </div>
           {plugin.description && <p className="text-xs text-secondary leading-relaxed">{plugin.description}</p>}
           <div className="mt-2">
-            <CapabilityChips
-              caps={matrixCaps.filter(c => declared.has(c.id))}
-              servingSet={servingSet}
-              isTickFlow={false}
-            />
+            {plugin.inventory && plugin.inventory.length > 0 ? (
+              <div className="flex flex-wrap gap-1">
+                {plugin.inventory.map((inv, i) => {
+                  const servingNow = servingSet.has(inv.dataset)
+                  return (
+                    <span
+                      key={`${inv.dataset}-${i}`}
+                      title={inv.desc ? `「${inv.name}」：${inv.desc}` : `已适配「${inv.name}」`}
+                      className={`inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] leading-none ${
+                        servingNow ? 'bg-accent/15 text-accent' : 'bg-elevated/60 text-muted/70'
+                      }`}
+                    >
+                      {servingNow ? <Check className="h-2.5 w-2.5" /> : null}
+                      {inv.name}
+                    </span>
+                  )
+                })}
+              </div>
+            ) : (
+              <CapabilityChips
+                caps={matrixCaps.filter(c => declared.has(c.id))}
+                servingSet={servingSet}
+                isTickFlow={false}
+              />
+            )}
           </div>
         </div>
       </div>

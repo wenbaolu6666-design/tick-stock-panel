@@ -20,7 +20,7 @@ import polars as pl
 
 logger = logging.getLogger(__name__)
 
-_DATASETS = ("sector", "anomaly")
+_DATASETS = ("sector", "anomaly", "news")
 
 _API_URL = "https://apphis.longhuvip.com/w1/api/index.php"
 _DEVICE_ID = os.getenv("KPL_DEVICE_ID", "80ca7d1b-2a24-3cd0-a915-99b61f6f88aa")
@@ -226,6 +226,51 @@ class KaiPanLaProvider:
             })
         return out
 
+    # ---- news 数据集: 板块日基面新闻/异动归因 (GetDayBaseFaceListZDEvnArt) ----
+    def get_news(self, limit: int = 50) -> pl.DataFrame:
+        """板块日基面新闻与归因 (news): 聚合当日强度榜前 10 板块, 按 ID 去重。
+
+        行: title/content/publish_time/importance/source/plate_id/zt_num/lz_info
+        (zt_num 板块涨停家数, lz_info 连板梯队明细)。
+        """
+        date = _last_trading_date()
+        plate_ids = [
+            str(r["PlateID"]) for r in _fetch_sector_ranking(date).to_dicts()[:10]
+        ]
+        seen: set = set()
+        out: list[dict] = []
+        for pid in plate_ids:
+            if len(out) >= limit:
+                break
+            try:
+                params = {
+                    "a": "GetDayBaseFaceListZDEvnArt", "c": "ZhiShuKLine",
+                    "Token": _TOKEN, "StockID": pid, "UserID": _USER_ID,
+                    "Index": "0", "st": "10", "Type": "0", "IsBoom": "0",
+                    **_BASE_PARAMS,
+                }
+                items = _json.loads(_post(params)).get("List") or []
+            except Exception as e:  # noqa: BLE001
+                logger.warning("kpl_ext GetDayBaseFaceListZDEvnArt %s failed: %s", pid, e)
+                continue
+            for it in items:
+                if not isinstance(it, dict) or it.get("ID") in seen:
+                    continue
+                seen.add(it.get("ID"))
+                out.append({
+                    "title": str(it.get("Title") or "")[:120],
+                    "content": it.get("BoomReason") or "",
+                    "publish_time": it.get("Date"),
+                    "importance": bool(it.get("IsBoom")),
+                    "source": "开盘啦",
+                    "plate_id": str(pid),
+                    "zt_num": it.get("ZTNum"),
+                    "lz_info": it.get("LZInfo"),
+                })
+                if len(out) >= limit:
+                    break
+        return pl.DataFrame(out)
+
     def test_dataset(self, dataset: str, symbols: list[str] | None = None) -> dict:
         if dataset == "sector":
             df = _fetch_sector_ranking()
@@ -235,6 +280,14 @@ class KaiPanLaProvider:
             prov = KaiPanLaProvider()
             try:
                 df = prov.get_anomaly()
+            finally:
+                prov.close()
+            return {"provider": self.name, "dataset": dataset, "rows": df.height,
+                    "columns": df.columns, "preview": df.head(3).to_dicts()}
+        if dataset == "news":
+            prov = KaiPanLaProvider()
+            try:
+                df = prov.get_news()
             finally:
                 prov.close()
             return {"provider": self.name, "dataset": dataset, "rows": df.height,

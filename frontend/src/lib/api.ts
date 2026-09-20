@@ -1686,6 +1686,8 @@ export interface PluginDataSourceItem {
   name: string
   display_name: string
   datasets: string[]
+  /** 按来源(接口)声明的能力清单: 卡片按它列中文接口名, 同一 dataset 的多接口也能各自展示 */
+  inventory?: Array<{ dataset: string; name: string; desc?: string }>
   runtime: string          // node | python | none
   available: boolean       // 依赖是否已安装
   status: string           // 可用性原因 (供 UI 显示)

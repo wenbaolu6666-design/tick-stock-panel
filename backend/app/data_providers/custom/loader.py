@@ -570,6 +570,9 @@ def _register_one_plugin(manifest: dict) -> None:
         "name": name,
         "display_name": manifest.get("display_name", name),
         "datasets": list(manifest.get("datasets", []) or []),
+        # inventory: 按来源(接口)声明的能力清单, 卡片按它列中文接口名;
+        # 同一 dataset 的多接口(如 kpl_ext sector 的子板块/成分股)也能各自展示
+        "inventory": list(manifest.get("inventory", []) or []),
         "runtime": runtime,
         "available": available,
         "status": reason,

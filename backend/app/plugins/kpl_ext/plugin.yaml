@@ -6,13 +6,29 @@ description: "开盘啦 App 公开 HTTP 接口: 板块强度排行/子板块谱�
 homepage: "https://apphis.longhuvip.com"
 api_key_env: ""
 check: app.plugins.kpl_ext.provider:availability
-datasets: [sector, anomaly]
+datasets: [sector, anomaly, news]
 inventory:
   - dataset: sector
     name: "板块强度排行"
     desc: "开盘啦板块强度/涨跌幅/大单净额 排行 (概念+行业)"
     upstream: "POST https://apphis.longhuvip.com/w1/api/index.php a=RealRankingInfo c=ZhiShuRanking"
+  - dataset: sector
+    name: "子板块谱系"
+    desc: "父板块下的子概念列表与各自强度值 (SonPlate_Info, 如芯片概念→存储/半导体设备/先进封装)"
+    upstream: "POST https://apphis.longhuvip.com/w1/api/index.php a=SonPlate_Info c=ZhiShuRanking"
+  - dataset: sector
+    name: "板块成分股"
+    desc: "板块内个股行情明细 (ZhiShuStockList_W8, 前 3 项语义人工核验, 其余保留 raw)"
+    upstream: "POST https://apphis.longhuvip.com/w1/api/index.php a=ZhiShuStockList_W8 c=ZhiShuRanking"
+  - dataset: sector
+    name: "板块分时量额"
+    desc: "板块日内分钟成交量/成交额 (GetVolTurIncremental, 09:30 起)"
+    upstream: "POST https://apphis.longhuvip.com/w1/api/index.php a=GetVolTurIncremental c=ZhiShuL2Data"
   - dataset: anomaly
     name: "板块异动原因"
     desc: "板块当日异动个股与题材归因(BKFenShiZhiBo: Reason 题材/板高/IsImportant 核心异动, 开盘啦独家视角)"
     upstream: "POST https://apphis.longhuvip.com/w1/api/index.php a=BKFenShiZhiBo c=HisConceptionPoint"
+  - dataset: news
+    name: "板块日基面新闻"
+    desc: "板块当日基面新闻/异动归因 (GetDayBaseFaceListZDEvnArt: Title/BoomReason/涨停家数/连板梯队)"
+    upstream: "POST https://apphis.longhuvip.com/w1/api/index.php a=GetDayBaseFaceListZDEvnArt c=ZhiShuKLine"

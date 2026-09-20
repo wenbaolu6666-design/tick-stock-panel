@@ -48,7 +48,7 @@ from app.plugins.fuyao.client import FuyaoClient, FuyaoError
 logger = logging.getLogger(__name__)
 
 # 只声明真实提供的数据集; 其余数据集 provider_has_dataset 返回 False → 回退 tickflow
-_DATASETS = ("realtime", "daily", "adj_factor", "financial")
+_DATASETS = ("realtime", "daily", "adj_factor", "financial", "fund")
 
 API_KEY_ENV = "FUYAO_API_KEY"
 SECRETS_FIELD = "fuyao_api_key"  # UI 配置的 Key 存 secrets.json, 优先级高于 .env
@@ -1171,3 +1171,34 @@ class FuyaoProvider:
             "columns": list(head[0].keys()) if head else [],
             "preview": head,
         }
+
+    # ---- 基金 (fund) ----
+    # days → 扶摇 range 档位 (week/month/tmonth/hyear/year/twoyear/tyear/fyear)
+    _FUND_RANGES = (
+        (7, "week"), (31, "month"), (92, "tmonth"), (183, "hyear"),
+        (366, "year"), (730, "twoyear"), (1095, "tyear"), (1096, "fyear"),
+    )
+
+    def get_fund_nav(self, symbol: str, days: int = 90) -> pl.DataFrame:
+        """基金单位净值序列 (fund dataset, GET /api/fund/performance/nav)。
+
+        symbol 为带市场后缀的同花顺基金代码: 510300.SH / 161725.SZ / 025480.OF;
+        不带后缀时默认按场外 .OF 处理。返回列: date(nav_date), unit_nav。
+        后续消费端接入 (基金页/监控) 再扩展持仓/经理/分红等接口。
+        """
+        code = symbol.strip()
+        if "." not in code:
+            code = f"{code}.OF"
+        rng = "fyear"
+        for limit, name in self._FUND_RANGES:
+            if days <= limit:
+                rng = name
+                break
+        items = self._get_client().fund_performance_nav(code, range_=rng)
+        rows = [
+            {"date": date.fromtimestamp(item["nav_date"] / 1000), "unit_nav": item.get("unit_nav")}
+            for item in items
+            if item.get("nav_date") is not None
+        ]
+        return pl.DataFrame(rows)
+

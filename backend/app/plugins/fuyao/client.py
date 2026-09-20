@@ -216,6 +216,20 @@ class FuyaoClient:
         rows = data.get("item")
         return rows if isinstance(rows, list) else []
 
+    # ---- 基金 (fund) ----
+    def fund_performance_nav(self, thscode: str, range_: str | None = None, nav_type: str = "unit") -> list[dict]:
+        """基金净值序列 (GET /api/fund/performance/nav)。
+
+        range: week/month/tmonth/hyear/year/twoyear/tyear/fyear; 不传返回最新一条。
+        返回 data.item 原始行: {nav_date(毫秒), unit_nav(, adj_nav)}。
+        """
+        params: dict = {"thscode": thscode, "nav_type": nav_type}
+        if range_:
+            params["range"] = range_
+        data = self._get("/api/fund/performance/nav", params)
+        rows = data.get("item")
+        return rows if isinstance(rows, list) else []
+
     def price_snapshot_batch(self, thscodes: list[str]) -> list[dict]:
         """按 thscodes 批量行情快照(最新价等), 用于估值推导的分母。
 

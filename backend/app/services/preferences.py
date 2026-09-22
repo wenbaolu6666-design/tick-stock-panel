@@ -1,4 +1,4 @@
-"""用户偏好设置持久化。
+﻿"""用户偏好设置持久化。
 
 存储位置: data/user_data/preferences.json
 沿用 secrets_store 的 merge-write 模式,但不做 chmod 0600 (非敏感数据)。
@@ -271,10 +271,9 @@ def _allowed_data_providers() -> set[str]:
 
 
 def get_daily_data_provider() -> str:
-    # 日线锁死通达信本地 (2026-09-20 用户决定): vipdoc 为唯一日线源, API 源日K
-    # 不再路由/覆盖; 新增日线数据由 vipdoc 增量同步守护自动入库 (见 tickflow.scheduler)。
-    # 解除锁定需改回读 preferences 的逻辑, 并同步更新 docs/tsp-system-state.md。
-    return "tdx_local"
+    # 本地优先(2026-09-20 用户决定, 取代此前的锁死): 默认路由通达信本地
+    # (vipdoc 为唯一来源时最稳), 但保留可切换 — 不再硬编码锁定。
+    return str(load().get("daily_data_provider", "tdx_local") or "tdx_local").lower()
 
 
 def get_adj_factor_provider() -> str:

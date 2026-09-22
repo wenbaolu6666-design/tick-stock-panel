@@ -33,8 +33,6 @@ CAPABILITY_REGISTRY: list[dict] = [
         "field": "daily_data_provider",
         "default": "tdx_local",
         "tf_tier": "none",
-        # 锁死: 唯一日线源为通达信本地(vipdoc), 路由不可切换; getter 亦恒定返回
-        "locked": True,
     },
     {
         "id": "adj_factor",

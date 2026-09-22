@@ -80,8 +80,8 @@ AI 代理规则见其第 13 节),二者不互相替代。
 
 ## 数据口径与同步(用户 2026-09-20 决定)
 
-- **日线锁死通达信本地**: `daily_data_provider` 恒为 `tdx_local`(getter 硬编码,
-  注册表 `locked: True`, 前端禁切)。解除需改代码并同步本文档。
+- **日线本地优先**: `daily_data_provider` 默认 `tdx_local`(2026-09-20 用户决定,
+  取代此前的锁死方案): vipdoc 为主源, 但保留可切换, 不再硬编码锁定。
 - **统一口径契约**: 所有日K provider 输出**不复权原始价**进库(实测 5 源均遵守,
   tdx_quant `dividend_type=none`); 前复权在 enriched 层由 adj_factor 统一推导 —
   切换数据源不会产生口径分叉。

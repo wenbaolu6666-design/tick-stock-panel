@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import logging
 import sys
+import threading
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -206,7 +208,7 @@ async def _application_lifespan(app: FastAPI):
     # 停机缺口自检: 延迟后台扫描, 发现最近交易日的盘中快照/缺口时自动创建
     # 修复任务 (盘中停机→次日开实时场景, 不修则坏数据被"只刷今天"分支永久留存)
     try:
-        import threading
+    # threading imported at module top (local import causes UnboundLocalError)
 
         from app.services.data_integrity import boot_integrity_check
 

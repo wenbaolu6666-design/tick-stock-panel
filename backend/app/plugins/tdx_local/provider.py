@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import numpy as np
 import polars as pl
 
 logger = logging.getLogger(__name__)
@@ -27,6 +28,9 @@ _REC = struct.Struct("<IIIIIfII")
 _REC_SIZE = 32
 _LC_REC = struct.Struct("<IfffffII")  # pack, open, high, low, close, amount, volume(股), 保留
 _LC_SIZE = 32
+# 向量化 .lc1 解析(等价 _LC_REC): 整文件一次 frombuffer, 37万条记录无 Python 逐条循环
+_LC_DT = np.dtype([("pack", "<u4"), ("o", "<f4"), ("h", "<f4"), ("l", "<f4"),
+                   ("c", "<f4"), ("amt", "<f4"), ("vol", "<u4"), ("rsv", "<u4")])
 
 
 def _f(value) -> float | None:
@@ -231,53 +235,87 @@ class TdxLocalProvider:
                     continue
 
                 data = lc_path.read_bytes()
-                groups: dict[int, list[tuple]] = {}
-                for j in range(0, len(data) // _LC_SIZE):
-                    pack, o, hi, lo, cl, amt, vol, _rsv = _LC_REC.unpack_from(data, j * _LC_SIZE)
-                    minutes, day_group = pack >> 16, pack & 0xFFFF
-                    groups.setdefault(day_group, []).append((minutes, o, hi, lo, cl, amt, vol))
+                n = len(data) // _LC_SIZE
+                if n == 0:
+                    continue
+                # 向量化解析(37万条记录无 Python 逐条循环): numpy 一次解出
+                # minutes/day_group/OHLC/amt/vol, 日期向量解码, 窗口先过滤,
+                # Python 只构造窗口内记录的 datetime(数百条)。
+                arr = np.frombuffer(data, dtype=_LC_DT, count=n)
+                pack = arr["pack"].astype(np.uint64)
+                minutes = (pack >> np.uint64(16)).astype(np.int64)
+                day_groups = (pack & np.uint64(0xFFFF)).astype(np.int64)
+                y_off = day_groups // 2048
+                md = day_groups % 2048
+                mon = md // 100
+                dd = md % 100
+                valid = (mon >= 1) & (mon <= 12) & (dd >= 1) & (dd <= 31)
+                ymds = (2004 + y_off) * 10000 + mon * 100 + dd
 
-                recs: list[dict] = []
-                day_idx = len(daily_dates) - 1
-                for day_group in sorted(groups, reverse=True):
-                    date_int = _decode_day_group(day_group)
-                    if date_int is None:
-                        # 自解码失败 → 锚定回退 (与旧行为一致)
+                # 窗口先在日期层粗过滤(start/end 为 naive 北京墙钟 → ymd_int)
+                ymd_lo, ymd_hi = 0, 99999999
+                s_naive = start_time.replace(tzinfo=None) if start_time is not None and start_time.tzinfo is not None else start_time
+                e_naive = end_time.replace(tzinfo=None) if end_time is not None and end_time.tzinfo is not None else end_time
+                if s_naive is not None:
+                    ymd_lo = s_naive.year * 10000 + s_naive.month * 100 + s_naive.day
+                if e_naive is not None:
+                    ymd_hi = e_naive.year * 10000 + e_naive.month * 100 + e_naive.day
+                in_window = valid & (ymds >= ymd_lo) & (ymds <= ymd_hi)
+                # 精确到时刻(与旧 datetime 过滤语义一致): 首日/末日的分钟边界
+                if s_naive is not None:
+                    smin = s_naive.hour * 60 + s_naive.minute
+                    in_window &= (ymds > ymd_lo) | (minutes >= smin)
+                if e_naive is not None:
+                    emin = e_naive.hour * 60 + e_naive.minute
+                    in_window &= (ymds < ymd_hi) | (minutes <= emin)
+                idxs = np.nonzero(in_window)[0]
+                if idxs.size == 0:
+                    continue
+
+                # 无效 day_group(罕见): 退回 .day 序列倒序锚定(旧行为)
+                anchor: dict[int, int] = {}
+                if not valid.all():
+                    inv_groups = sorted({int(g) for g in day_groups[~valid]}, reverse=True)
+                    day_idx = len(daily_dates) - 1
+                    for g in inv_groups:
                         if day_idx < 0:
                             break
-                        date_int = daily_dates[day_idx]
+                        anchor[g] = daily_dates[day_idx]
                         day_idx -= 1
+
+                o_list = arr["o"].tolist()
+                h_list = arr["h"].tolist()
+                l_list = arr["l"].tolist()
+                c_list = arr["c"].tolist()
+                amt_list = arr["amt"].tolist()
+                vol_list = arr["vol"].tolist()
+                recs: list[dict] = []
+                for i in idxs.tolist():
+                    g = int(day_groups[i])
+                    if bool(valid[i]):
+                        ymd = int(ymds[i])
+                    elif g in anchor:
+                        ymd = anchor[g]
                     else:
-                        # 自解码成功时同步消费锚定指针, 保持两组路径语义一致
-                        if day_idx >= 0 and daily_dates[day_idx] == date_int:
-                            day_idx -= 1
-                    ds = str(date_int)
-                    ymd = f"{ds[:4]}-{ds[4:6]}-{ds[6:8]}"
-                    yy, mo, dd2 = int(ymd[:4]), int(ymd[5:7]), int(ymd[8:10])
-                    for minutes, o, hi, lo, cl, amt, vol in sorted(groups[day_group]):
-                        hh, mm = divmod(minutes, 60)
-                        recs.append({
-                            "symbol": symbol,
-                            "datetime": datetime(yy, mo, dd2, hh, mm),
-                            "open": o,
-                            "high": hi,
-                            "low": lo,
-                            "close": cl,
-                            "volume": int(vol // 100),  # 股 → 手
-                            "amount": amt,
-                        })
-                    day_idx -= 1
-                df = pl.DataFrame(recs) if recs else pl.DataFrame()
-                if not df.is_empty():
-                    # 调用方(如 fetch_minute_single)可能传 tz-aware 窗口; 本地条线为 naive 北京墙钟, 统一去 tz 再比较
-                    s_naive = start_time.replace(tzinfo=None) if start_time is not None and start_time.tzinfo is not None else start_time
-                    e_naive = end_time.replace(tzinfo=None) if end_time is not None and end_time.tzinfo is not None else end_time
-                    if s_naive is not None:
-                        df = df.filter(pl.col("datetime") >= s_naive)
-                    if e_naive is not None:
-                        df = df.filter(pl.col("datetime") <= e_naive)
-                    if not df.is_empty():
-                        frames.append(df)
+                        continue
+                    mnt = int(minutes[i])
+                    hh, mm = divmod(mnt, 60)
+                    if hh > 23 or mm > 59:
+                        continue
+                    ds = f"{ymd:08d}"
+                    recs.append({
+                        "symbol": symbol,
+                        "datetime": datetime(int(ds[:4]), int(ds[4:6]), int(ds[6:8]), hh, mm),
+                        "open": o_list[i],
+                        "high": h_list[i],
+                        "low": l_list[i],
+                        "close": c_list[i],
+                        "volume": int(vol_list[i] // 100),  # 股 → 手
+                        "amount": amt_list[i],
+                    })
+                if not recs:
+                    continue
+                frames.append(pl.DataFrame(recs).sort("symbol", "datetime"))
             except Exception as e:  # noqa: BLE001
                 logger.warning("tdx_local minute %s failed: %s", symbol, e)
             if on_chunk_done:

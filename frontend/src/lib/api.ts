@@ -2327,6 +2327,14 @@ export const api = {
     request<{ ok: boolean; count: number; msg: string }>('/api/settings/preferences/limit-ladder-monitor/run', {
       method: 'POST',
     }),
+  dashboardNorthbound: () =>
+    request<{ ok: boolean; rows: { time: string; hgt: number | null; sgt: number | null }[]; latest?: { time: string; hgt: number | null; sgt: number | null; total: number }; error?: string }>(
+      '/api/dashboard/northbound',
+    ),
+  dashboardLhb: (limit = 10) =>
+    request<{ ok: boolean; date: string; rows: { symbol: string; name: string; reason: string; net_buy: number | null; change_pct: number | null }[]; error?: string }>(
+      `/api/dashboard/lhb?limit=${limit}`,
+    ),
   updateDepthFinalizeTime: (hour: number, minute: number) =>
     request<{ hour: number; minute: number }>('/api/settings/preferences/depth-finalize-time', {
       method: 'PUT',

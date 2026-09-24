@@ -1,4 +1,4 @@
-"""Local TDX vipdoc built-in plugin: reads .day daily bars + .lc1/.lc5 minute bars from disk.
+﻿"""Local TDX vipdoc built-in plugin: reads .day daily bars + .lc1/.lc5 minute bars from disk.
 
 Uses the downloaded 通达信 data packs (hsjday.zip -> E:\\tdx\\vipdoc). No
 network, no TDX server, no TQ client required for daily bars. Volume is
@@ -29,6 +29,8 @@ _REC_SIZE = 32
 _LC_REC = struct.Struct("<IfffffII")  # pack, open, high, low, close, amount, volume(股), 保留
 _LC_SIZE = 32
 # 向量化 .lc1 解析(等价 _LC_REC): 整文件一次 frombuffer, 37万条记录无 Python 逐条循环
+_DAY_DT = np.dtype([("date", "<u4"), ("o", "<u4"), ("h", "<u4"), ("l", "<u4"),
+                    ("c", "<u4"), ("amt", "<f4"), ("vol", "<u4"), ("rsv", "<u4")])
 _LC_DT = np.dtype([("pack", "<u4"), ("o", "<f4"), ("h", "<f4"), ("l", "<f4"),
                    ("c", "<f4"), ("amt", "<f4"), ("vol", "<u4"), ("rsv", "<u4")])
 
@@ -49,22 +51,53 @@ def _path_for(symbol: str) -> Path | None:
 
 def _read_day(path: Path, symbol: str) -> list[dict]:
     data = path.read_bytes()
+    n = len(data) // _REC_SIZE
+    if n == 0:
+        return []
+    # 向量化: numpy 一次解出全部记录, 8千条/只不再逐条 Python unpack
+    arr = np.frombuffer(data, dtype=_DAY_DT, count=n)
+    dates = arr["date"]
+    valid = dates > 0
+    idxs = np.nonzero(valid)[0]
     rows: list[dict] = []
-    for i in range(0, len(data) // _REC_SIZE):
-        date, op, hi, lo, cl, amt, vol, _rsv = _REC.unpack_from(data, i * _REC_SIZE)
-        if date <= 0:
-            continue
+    o = arr["o"].tolist(); h = arr["h"].tolist(); l = arr["l"].tolist()
+    c = arr["c"].tolist(); v = arr["vol"].tolist(); a = arr["amt"].tolist()
+    for i in idxs.tolist():
         rows.append({
             "symbol": symbol,
-            "date": date,
-            "open": op / 100.0,
-            "high": hi / 100.0,
-            "low": lo / 100.0,
-            "close": cl / 100.0,
-            "volume": int(vol // 100),  # shares -> lots
-            "amount": amt,
+            "date": int(dates[i]),
+            "open": o[i] / 100.0,
+            "high": h[i] / 100.0,
+            "low": l[i] / 100.0,
+            "close": c[i] / 100.0,
+            "volume": int(v[i] // 100),  # shares -> lots
+            "amount": a[i],
         })
     return rows
+
+
+def _read_day_df(path: Path, symbol: str) -> pl.DataFrame | None:
+    """向量化读取 .day → DataFrame(symbol/date/ohlc/volume/amount), date 为 date 类型。"""
+    if path is None or not path.exists():
+        return None
+    data = path.read_bytes()
+    n = len(data) // _REC_SIZE
+    if n == 0:
+        return None
+    arr = np.frombuffer(data, dtype=_DAY_DT, count=n)
+    df = pl.DataFrame({
+        "date": arr["date"].astype(np.int64),
+        "open": arr["o"].astype(np.float64) / 100.0,
+        "high": arr["h"].astype(np.float64) / 100.0,
+        "low": arr["l"].astype(np.float64) / 100.0,
+        "close": arr["c"].astype(np.float64) / 100.0,
+        "volume": (arr["vol"] // 100).astype(np.int64),   # shares -> lots
+        "amount": arr["amt"].astype(np.float64),
+    }).filter(pl.col("date") > 0)
+    df = df.with_columns(
+        pl.col("date").cast(pl.Int32).cast(pl.Utf8).str.to_date("%Y%m%d", strict=False),
+    )
+    return df.with_columns(pl.lit(symbol).alias("symbol"))
 
 
 def _decode_day_group(dg: int) -> int | None:
@@ -125,11 +158,9 @@ class TdxLocalProvider:
         for i, symbol in enumerate(symbols):
             path = _path_for(symbol)
             try:
-                if path is None or not path.exists():
-                    rows = []
-                else:
-                    rows = _read_day(path, symbol)
-                df = self._daily_df(rows)
+                df = _read_day_df(path, symbol)
+                if df is None or df.is_empty():
+                    continue
                 if start_time:
                     df = df.filter(pl.col("date") >= start_time.date())
                 if end_time:

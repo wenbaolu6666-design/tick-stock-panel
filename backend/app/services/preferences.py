@@ -397,6 +397,11 @@ def get_minute_history_data_provider() -> str:
     return provider if provider in _allowed_data_providers() else "tdx_local"
 
 
+def get_board_minute_data_provider() -> str:
+    provider = str(load().get("board_minute_data_provider", "board_local") or "board_local").lower()
+    return provider if provider in _allowed_data_providers() else "board_local"
+
+
 def get_depth5_data_provider() -> str:
     provider = str(load().get("depth5_data_provider", "tickflow") or "tickflow").lower()
     return provider if provider in _allowed_data_providers() else "tickflow"

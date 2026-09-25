@@ -1,0 +1,15 @@
+# TSP built-in local board-minute plugin — 板块分时(通达信 880xxx 板块 1/5/15/30/60 分钟)。
+# 数据来源: 百度盘『通达信板块_分时数据』(2011-11~2026-01)经
+# tools_board_minute_import.py 导入 data/board_minute/{m1,m5,m15,m30,m60}/date=YYYY-MM-DD/part.parquet。
+name: board_local
+display_name: "板块分时(通达信本地)"
+runtime: none
+entry: app.plugins.board_local.provider:BoardLocalProvider
+check: app.plugins.board_local.provider:availability
+datasets: [board_minute]
+description: "通达信板块分时:概念/行业板块(880xxx)的 1/5/15/30/60 分钟 K 线,2011-11~2026-01。数据来自百度盘通达信板块分时包导入(TSP 专属维度, API 源无此数据)。"
+inventory:
+  - dataset: board_minute
+    name: "板块分时"
+    desc: "概念/行业板块 1/5/15/30/60 分钟 K(datetime/OHLC/成交额/振幅/均价), 通达信 880xxx 板块体系, 2011-11~2026-01"
+    upstream: "百度盘『通达信板块_分时数据』→ tools_board_minute_import.py → data/board_minute/*"

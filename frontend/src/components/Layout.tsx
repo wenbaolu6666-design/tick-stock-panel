@@ -21,6 +21,7 @@ import {
 } from '@/lib/useSharedMutations'
 import { QK } from '@/lib/queryKeys'
 import {
+  Clock,
   Siren,
   Star,
   ScanSearch,
@@ -92,6 +93,7 @@ const nav = [
   { to: '/stock-analysis',    label: '个股分析', icon: TrendingUp },
   { to: '/limit-ladder', label: '连板梯队', icon: Flame },
   { to: '/concept-analysis', label: '概念分析', icon: Layers3 },
+  { to: '/board-minute', label: '板块分时', icon: Clock },
   { to: '/industry-analysis', label: '行业分析', icon: Landmark },
   { to: '/financials', label: '财务分析', icon: FileText },
   { to: '/monitor', label: '监控中心', icon: RadioTower },

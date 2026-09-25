@@ -2366,6 +2366,24 @@ export const api = {
       body: JSON.stringify({ size }),
     }),
 
+  // 板块分时(本地 board_local)
+  boardMinute: (params: { board_code: string; date?: string; period?: string; days?: number }) => {
+    const q = new URLSearchParams()
+    q.set('board_code', params.board_code)
+    if (params.date) q.set('date', params.date)
+    if (params.period) q.set('period', params.period)
+    if (params.days) q.set('days', String(params.days))
+    return request<{ provider: string; board_code: string; period: string; rows: Array<Record<string, unknown>> }>(
+      `/api/board/minute?${q.toString()}`,
+    )
+  },
+  boardList: (period = 'm1') =>
+    request<{ period: string; count: number; boards: Array<{ board_code: string; board_name: string }> }>(
+      `/api/board/boards?period=${period}`,
+    ),
+  boardPeriods: () =>
+    request<{ periods: string[] }>('/api/board/periods'),
+
   // 自选列表列配置
   watchlistColumns: () =>
     request<{ columns: any[] | null }>('/api/settings/preferences/watchlist-columns'),

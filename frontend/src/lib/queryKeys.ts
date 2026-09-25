@@ -8,6 +8,9 @@
 // ===== Query Key 工厂 =====
 
 export const QK = {
+  boardPeriods:          () => ['board-periods'],
+  boardList:             (period: string) => ['board-list', period],
+  boardMinute:           (code: string, date: string, period: string) => ['board-minute', code, date, period],
   // 全局 / 共享 (Layout 预取)
   capabilities:   ['capabilities'] as const,
   settings:       ['settings'] as const,

@@ -2366,6 +2366,15 @@ export const api = {
       body: JSON.stringify({ size }),
     }),
 
+  // 估值股本日频历史(本地 valuation_local)
+  valuationHistory: (params: { symbol: string; days?: number }) => {
+    const q = new URLSearchParams()
+    q.set('symbol', params.symbol)
+    if (params.days) q.set('days', String(params.days))
+    return request<{ provider: string; symbol: string; rows: Array<Record<string, unknown>> }>(
+      `/api/valuation/history?${q.toString()}`,
+    )
+  },
   // 板块分时(本地 board_local)
   boardMinute: (params: { board_code: string; date?: string; period?: string; days?: number }) => {
     const q = new URLSearchParams()

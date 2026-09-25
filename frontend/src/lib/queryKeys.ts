@@ -8,6 +8,7 @@
 // ===== Query Key 工厂 =====
 
 export const QK = {
+  valuationHistory:       (symbol: string, days: number) => ['valuation-history', symbol, days],
   boardPeriods:          () => ['board-periods'],
   boardList:             (period: string) => ['board-list', period],
   boardMinute:           (code: string, date: string, period: string) => ['board-minute', code, date, period],

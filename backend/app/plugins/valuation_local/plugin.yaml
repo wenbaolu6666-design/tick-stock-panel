@@ -1,0 +1,16 @@
+# TSP built-in local valuation plugin — 日频估值/股本历史(1991-2025 全市场)。
+# 数据来源: 百度盘『股票全量数据.zip』(5789 股 CSV)经
+# tools_valuation_import.py 导入 data/valuation_history/part-*.parquet。
+# 注意: 与报告期口径的 financials/shares(季度快照)不同, 此为日频, 独立表不动原表。
+name: valuation_local
+display_name: "估值股本(本地历史)"
+runtime: none
+entry: app.plugins.valuation_local.provider:ValuationLocalProvider
+check: app.plugins.valuation_local.provider:availability
+datasets: [valuation_history]
+description: "个股日频估值/股本历史(1991-2025, 5789 只): PE(TTM)/PB/PS/股息率/总股本/流通股本/自由流通股本/总市值/流通市值/复权因子/当日涨停跌停价。来自百度盘股票全量数据导入, TSP 独有维度(fuyao 股本仅报告期快照)。"
+inventory:
+  - dataset: valuation_history
+    name: "估值股本日频历史"
+    desc: "PE(TTM)/PB/PS/股息率/总股本/流通股本/总市值/流通市值/复权因子, 1991-2025 日频(每日一条)"
+    upstream: "百度盘『股票全量数据.zip』→ tools_valuation_import.py → data/valuation_history/part-*.parquet"

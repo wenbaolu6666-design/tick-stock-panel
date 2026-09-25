@@ -440,6 +440,7 @@ class DataProvidersIn(BaseModel):
     fund_data_provider: str | None = None
     minute_history_data_provider: str | None = None
     board_minute_data_provider: str | None = None
+    valuation_history_data_provider: str | None = None
     depth5_data_provider: str | None = None
     realtime_data_provider: str | None = None
     financial_data_provider: str | None = None
@@ -562,6 +563,7 @@ def get_preferences() -> dict:
         "fund_data_provider": preferences.get_fund_data_provider(),
         "minute_history_data_provider": preferences.get_minute_history_data_provider(),
         "board_minute_data_provider": preferences.get_board_minute_data_provider(),
+        "valuation_history_data_provider": preferences.get_valuation_history_data_provider(),
         "minute_history_days": _minute_history_days(),
         "depth5_data_provider": preferences.get_depth5_data_provider(),
         "realtime_data_provider": preferences.get_realtime_data_provider(),
@@ -674,6 +676,7 @@ def get_capability_matrix() -> dict:
         "fund_data_provider": preferences.get_fund_data_provider(),
         "minute_history_data_provider": preferences.get_minute_history_data_provider(),
         "board_minute_data_provider": preferences.get_board_minute_data_provider(),
+        "valuation_history_data_provider": preferences.get_valuation_history_data_provider(),
             "depth5_data_provider": preferences.get_depth5_data_provider(),
             "adj_factor_provider": preferences.get_adj_factor_provider(),
             "financial_data_provider": preferences.get_financial_provider(),
@@ -903,6 +906,7 @@ def update_data_providers(req: DataProvidersIn, request: Request) -> dict:
         "fund_data_provider": preferences.get_fund_data_provider(),
         "minute_history_data_provider": preferences.get_minute_history_data_provider(),
         "board_minute_data_provider": preferences.get_board_minute_data_provider(),
+        "valuation_history_data_provider": preferences.get_valuation_history_data_provider(),
         "depth5_data_provider": preferences.get_depth5_data_provider(),
         "realtime_data_provider": preferences.get_realtime_data_provider(),
         "financial_data_provider": preferences.get_financial_provider(),

@@ -26,6 +26,7 @@ const Lots = lazy(() => import('./pages/Lots').then(m => ({ default: m.Lots })))
 const Dashboard = lazy(() => import('./pages/Dashboard').then(m => ({ default: m.Dashboard })))
 const AnalysisDetail = lazy(() => import('./pages/AnalysisDetail').then(m => ({ default: m.AnalysisDetail })))
 const BoardMinute = lazy(() => import('./pages/BoardMinute').then(m => ({ default: m.BoardMinute })))
+const ValuationHistory = lazy(() => import('./pages/ValuationHistory').then(m => ({ default: m.ValuationHistory })))
 const ConceptAnalysis = lazy(() => import('./pages/ConceptAnalysis').then(m => ({ default: m.ConceptAnalysis })))
 const IndustryAnalysis = lazy(() => import('./pages/IndustryAnalysis').then(m => ({ default: m.IndustryAnalysis })))
 const StockAnalysis = lazy(() => import('./pages/StockAnalysis').then(m => ({ default: m.StockAnalysis })))
@@ -129,6 +130,7 @@ export const router = createBrowserRouter([
       { path: 'analysis/:menuId', element: <AnalysisDetail /> },
       { path: 'concept-analysis', element: <ConceptAnalysis /> },
       { path: 'board-minute', element: <BoardMinute /> },
+      { path: 'valuation-history', element: <ValuationHistory /> },
       { path: 'industry-analysis', element: <IndustryAnalysis /> },
       { path: 'stock-analysis', element: <StockAnalysis /> },
       { path: 'review', element: <Review /> },

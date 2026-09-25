@@ -402,6 +402,11 @@ def get_board_minute_data_provider() -> str:
     return provider if provider in _allowed_data_providers() else "board_local"
 
 
+def get_valuation_history_data_provider() -> str:
+    provider = str(load().get("valuation_history_data_provider", "valuation_local") or "valuation_local").lower()
+    return provider if provider in _allowed_data_providers() else "valuation_local"
+
+
 def get_depth5_data_provider() -> str:
     provider = str(load().get("depth5_data_provider", "tickflow") or "tickflow").lower()
     return provider if provider in _allowed_data_providers() else "tickflow"

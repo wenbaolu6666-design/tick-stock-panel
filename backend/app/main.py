@@ -1,4 +1,4 @@
-"""FastAPI 入口。"""
+﻿"""FastAPI 入口。"""
 from __future__ import annotations
 
 import logging
@@ -43,6 +43,7 @@ from app.api import (
 )
 from app.api import auth as auth_api
 from app.api import board as board_api
+from app.api import valuation as valuation_api
 from app.api import settings as settings_api
 from app.api.routes import router as core_router
 from app.config import settings
@@ -487,6 +488,7 @@ app.include_router(backtest.router)
 app.include_router(factors.router)
 app.include_router(mining.router)
 app.include_router(board_api.router)
+app.include_router(valuation_api.router)
 app.include_router(intraday.router)
 app.include_router(indices.router)
 app.include_router(overview.router)

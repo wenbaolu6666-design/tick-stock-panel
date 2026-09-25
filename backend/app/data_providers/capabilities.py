@@ -114,6 +114,7 @@ CAPABILITY_REGISTRY: list[dict] = [
     {'id': 'fund', 'label': '基金数据', 'desc': '基金数据', 'field': 'fund_data_provider', 'default': 'tickflow', 'tf_tier': 'starter'},
     {'id': 'minute_history', 'label': '1分钟历史K线', 'desc': '本地通达信 1 分钟历史数据 (2020-2025)', 'field': 'minute_history_data_provider', 'default': 'tdx_local', 'tf_tier': 'starter'},
     {'id': 'board_minute', 'label': '板块分时', 'desc': '概念/行业板块 1/5/15/30/60 分钟K (2011-2026)', 'field': 'board_minute_data_provider', 'default': 'board_local', 'tf_tier': 'starter'},
+    {'id': 'valuation_history', 'label': '估值股本', 'desc': 'PE/PB/股息率/股本/市值/复权因子日频 (1991-2025)', 'field': 'valuation_history_data_provider', 'default': 'valuation_local', 'tf_tier': 'starter'},
 ]
 
 _TICKFLOW_CANDIDATE = {

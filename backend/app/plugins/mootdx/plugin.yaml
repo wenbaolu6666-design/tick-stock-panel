@@ -6,7 +6,7 @@ entry: app.plugins.mootdx.provider:MootdxProvider
 check: app.plugins.mootdx.provider:availability
 datasets: [daily, minute, full_minute, realtime, depth5]
 description: "通达信 TCP 行情：不复权日K、1分钟K、盘中全市场快照、五档盘口(TCP quotes)。需要安装 mootdx；日K按原始价提供，复权由 TSP enriched 管道用 adj_factor 计算。"
-install_hint: "uv pip install --python backend/.venv/Scripts/python.exe mootdx"
+install_hint: "uv pip install --python 3.12 --system --break-system-packages mootdx"
 homepage: "https://github.com/mootdx/mootdx"
 inventory:
   - dataset: daily

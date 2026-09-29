@@ -7,8 +7,8 @@
 负责清理既有脏数据，可重复执行（幂等）。
 
 用法（从 backend/ 目录运行）：
-    .venv/bin/python -m scripts.cleanup_halt_days          # 清理 + dry-run 关闭
-    .venv/bin/python -m scripts.cleanup_halt_days --dry-run # 仅扫描，不写盘
+    'C:/Users/WenPaul/.local/bin/python.exe' -m scripts.cleanup_halt_days          # 清理 + dry-run 关闭
+    'C:/Users/WenPaul/.local/bin/python.exe' -m scripts.cleanup_halt_days --dry-run # 仅扫描，不写盘
 """
 from __future__ import annotations
 

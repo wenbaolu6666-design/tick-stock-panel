@@ -10,7 +10,7 @@ $mutexCreated = $false
 $mutex = New-Object System.Threading.Mutex($true, 'TSP-AutoStart-All', [ref]$mutexCreated)
 if (-not $mutexCreated) { exit 0 }
 
-$root = 'E:\WenPaul\Documents\量化炒股\tick-stock-panel'
+$root = 'D:\WenPaul\Documents\量化炒股\tick-stock-panel'
 
 $allLog = Join-Path $root 'logs/autostart-all.log'
 function LogAll($m) { Add-Content -Path $allLog -Value ("{0} {1}" -f (Get-Date -Format 'HH:mm:ss'), $m) -Encoding UTF8 }
@@ -29,7 +29,7 @@ function Start-Silent([string]$wd, [string]$exe, [string]$appargs, [string]$outf
     LogAll ("silent start: {0} {1}" -f $exe, $appargs)
 }
 
-$py = 'C:\Users\WenPaul\AppData\Roaming\uv\python\cpython-3.12.14-windows-x86_64-none\python.exe'
+$py = 'C:\Users\WenPaul\.local\bin\python.exe'
 $node = 'C:\Program Files\nodejs\node.exe'
 $log = Join-Path $root 'logs'
 $backendDir = Join-Path $root 'backend'
@@ -38,7 +38,7 @@ $frontendDir = Join-Path $root 'frontend'
 # 1) 通达信 (TQ 网关 17709 随登录后的量化插件上线; 已在跑则跳过)
 LogAll ("step1 tdxw already-running={0}" -f [bool](Get-Process tdxw -ErrorAction SilentlyContinue))
 if (-not (Get-Process tdxw -ErrorAction SilentlyContinue)) {
-    Start-Process -FilePath 'E:\tdx\tdxw.exe' -WorkingDirectory 'E:\tdx'
+    Start-Process -FilePath 'D:\new_tdx_hd_test\tdxw.exe' -WorkingDirectory 'D:\new_tdx_hd_test'
     LogAll "step1 tdxw Start-Process sent"
     # 等 TdxW 进程真正出现在进程表 (避免后端 tdx_quant 探测时误判未启动而二次拉起)
     $wdx = (Get-Date).AddSeconds(15)

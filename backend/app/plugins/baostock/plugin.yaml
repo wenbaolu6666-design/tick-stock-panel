@@ -8,7 +8,7 @@ entry: app.plugins.baostock.provider:BaostockProvider
 check: app.plugins.baostock.provider:availability
 datasets: [valuation, sector, corp_events]
 description: "baostock 免注册数据：日频估值历史 PE-TTM/PB-MRQ/PS-TTM/PCF-TTM+换手率（2016 起，五池估值回测可用）、全市场行业归属快照（证监会口径）。不支持北交所。"
-install_hint: "uv pip install --python backend/.venv/Scripts/python.exe baostock"
+install_hint: "uv pip install --python 3.12 --system --break-system-packages baostock"
 homepage: "https://baostock.com/"
 inventory:
   - dataset: valuation

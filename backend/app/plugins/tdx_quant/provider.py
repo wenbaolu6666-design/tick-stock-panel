@@ -101,7 +101,7 @@ def _dt_parse(date_s: str, time_s: str | None) -> datetime | None:
         return None
 
 
-_TDX_EXE_KNOWN = Path(r"E:\tdx\TdxW.exe")
+_TDX_EXE_KNOWN = Path(r"D:\new_tdx_hd_test\TdxW.exe")
 _ENSURE_ATTEMPTED = False
 
 

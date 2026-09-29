@@ -1,6 +1,6 @@
 ﻿"""Local TDX vipdoc built-in plugin: reads .day daily bars + .lc1/.lc5 minute bars from disk.
 
-Uses the downloaded 通达信 data packs (hsjday.zip -> E:\\tdx\\vipdoc). No
+Uses the local 通达信 client vipdoc (D:\\new_tdx_hd_test\\vipdoc). No
 network, no TDX server, no TQ client required for daily bars. Volume is
 converted from shares to lots to match TSP A-share contract.
 
@@ -23,7 +23,7 @@ import polars as pl
 logger = logging.getLogger(__name__)
 
 _DATASETS = ("daily", "minute")
-_ROOT = Path(os.getenv("TDX_DATA_DIR", r"E:\tdx\vipdoc"))
+_ROOT = Path(os.getenv("TDX_DATA_DIR", r"D:\new_tdx_hd_test\vipdoc"))
 _REC = struct.Struct("<IIIIIfII")
 _REC_SIZE = 32
 _LC_REC = struct.Struct("<IfffffII")  # pack, open, high, low, close, amount, volume(股), 保留
@@ -122,7 +122,7 @@ def availability() -> tuple[bool, str]:
         p = _ROOT / sub / "lday"
         if p.is_dir() and any(p.glob("*.day")):
             return True, f"ok ({_ROOT})"
-    return False, f"未找到通达信日线数据目录 {_ROOT}（请先解压 hsjday.zip 到 D:\\new_tdx_mock\\vipdoc）"
+    return False, f"未找到通达信日线数据目录 {_ROOT}（请先解压 hsjday.zip 到 D:\\new_tdx_hd_test\\vipdoc）"
 
 
 @dataclass

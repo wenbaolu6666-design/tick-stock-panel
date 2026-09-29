@@ -10,8 +10,8 @@ inventory:
   - dataset: daily
     name: "日K（不复权）"
     desc: "本地 .day 二进制日线，无网络依赖"
-    upstream: "本地文件 D:\\new_tdx_mock\\vipdoc\\{sh,sz,bj}\\lday (通达信 hsjday 数据包)"
+    upstream: "本地文件 D:\\new_tdx_hd_test\\vipdoc\\{sh,sz,bj}\\lday (通达信客户端 vipdoc)"
   - dataset: minute
     name: "分钟K（本地 vipdoc）"
     desc: ".lc5 五分钟原生(约98交易日) / .lc1 一分钟(240根/日)，volume 股→手；日期由 .day 序列锚定"
-    upstream: "本地文件 D:\\new_tdx_mock\\vipdoc\\{sh,sz}\\fzline(.lc5) / minline(.lc1) (通达信盘后下载, 只到上一交易日)"
+    upstream: "本地文件 D:\\new_tdx_hd_test\\vipdoc\\{sh,sz}\\fzline(.lc5) / minline(.lc1) (通达信盘后下载, 只到上一交易日)"

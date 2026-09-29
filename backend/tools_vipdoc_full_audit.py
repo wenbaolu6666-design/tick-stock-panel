@@ -16,8 +16,8 @@ from datetime import date
 
 import numpy as np
 
-ROOT = r'E:\tdx\vipdoc'
-OUT = r'E:\WenPaul\Documents\量化炒股\tick-stock-panel\data'
+ROOT = r'D:\new_tdx_hd_test\vipdoc'
+OUT = r'D:\WenPaul\Documents\量化炒股\tick-stock-panel\data'
 LC_DT = np.dtype([('pack', '<u4'), ('o', '<f4'), ('h', '<f4'), ('l', '<f4'),
                   ('c', '<f4'), ('amt', '<f4'), ('vol', '<u4'), ('rsv', '<u4')])
 DAY_REC = struct.Struct('<IIIIIfII')

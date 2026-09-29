@@ -48,7 +48,7 @@ $mutexCreated = $false
 $mutex = New-Object System.Threading.Mutex($true, 'TSP-TdxLogin-Auto', [ref]$mutexCreated)
 if (-not $mutexCreated) { exit 0 }
 
-$log = 'E:\WenPaul\Documents\量化炒股\tick-stock-panel\logs\tdx-login-auto.log'
+$log = 'D:\WenPaul\Documents\量化炒股\tick-stock-panel\logs\tdx-login-auto.log'
 function Log($m) { Add-Content -Path $log -Value ("{0} {1}" -f (Get-Date -Format 'HH:mm:ss'), $m) -Encoding UTF8 }
 
 function Test-Net {

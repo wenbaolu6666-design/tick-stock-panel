@@ -32,11 +32,11 @@ AI 代理规则见其第 13 节),二者不互相替代。
 
 ## 环境(硬性约定,违反必踩坑)
 
-- 项目根:`E:\WenPaul\Documents\量化炒股\tick-stock-panel`;终端是 **Git Bash**(Windows)。
+- 项目根:`D:\WenPaul\Documents\量化炒股\tick-stock-panel`;终端是 **Git Bash**(Windows)。
 - **两种 Python 用法要区分**:
   - 常驻服务运行(自启动链、手动拉起)用系统 Python 全路径,禁 venv/conda;裸 `python`
     是商店 alias 会静默失败:
-    `C:\Users\WenPaul\AppData\Roaming\uv\python\cpython-3.12.14-windows-x86_64-none\python.exe`
+    `C:\Users\WenPaul\.local\bin\python.exe`(uv shim)
   - **代码验证(跑测试/ruff)按上游规范用 uv**:`cd backend && uv run pytest tests/... -q`、
     `uv run ruff check ...`;前端 `pnpm build`(见 CONTRIBUTING 第 9 节验证矩阵)。
 - PowerShell 含中文的 `.ps1` 必须 **UTF-8 WITH BOM + CRLF**;写完用系统 Python 补 BOM+CRLF。
@@ -44,7 +44,7 @@ AI 代理规则见其第 13 节),二者不互相替代。
   路径一律用 `chr(92)` 拼接,不要手写反斜杠转义。
 - 注册计划任务/写注册表的脚本同样要 BOM,否则中文路径乱码(任务 LastResult=0xFFFD0000)。
 - git:`origin` 只读上游;推送用 `personal` 并带代理:
-  `git -c http.proxy=http://127.0.0.1:7897 push personal main`。
+  `git -c http.proxy=http://127.0.0.1:7900 push personal main`。
 - Git Bash 调 Windows 命令开关用双斜杠:`schtasks //run //tn "TSP-AutoStart"`。
 
 ## 服务栈与自启动链
@@ -86,7 +86,7 @@ AI 代理规则见其第 13 节),二者不互相替代。
   tdx_quant `dividend_type=none`); 前复权在 enriched 层由 adj_factor 统一推导 —
   切换数据源不会产生口径分叉。
 - **vipdoc 自动同步守护** (`app/services/vipdoc_watch.py`): 每 30 分钟 + 启动后
-  120s 探测 `E:	dxipdoc` 代表股 .day 最新日期, 超过库最新即自动跑盘后管道
+  120s 探测 `D:\new_tdx_hd_test\vipdoc` 代表股 .day 最新日期, 超过库最新即自动跑盘后管道
   增量(override_start_date=库最新+1)。百度盘下载/盘后数据下载后无需手动同步。
 - **存储两层**: vipdoc(源, 通达信客户端自用, 只读) + `data/` parquet 库(TSP 查询/
   计算层, 压缩后更小; enriched/回测/策略只读库, 删库会瘫痪计算链)。

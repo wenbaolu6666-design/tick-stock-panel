@@ -7,7 +7,7 @@ entry: app.plugins.sws_ext.provider:SwsExtProvider
 check: app.plugins.sws_ext.provider:availability
 datasets: [sector]
 description: "申万行业分类历次调整全表（股票代码/计入日期/行业代码/更新日期）：按计入-退出区间取历史时点归属，消除前视偏差。零 Key。"
-install_hint: "uv pip install --python backend/.venv/Scripts/python.exe xlrd"
+install_hint: "uv pip install --python 3.12 --system --break-system-packages xlrd"
 homepage: "https://www.swsresearch.com/"
 inventory:
   - dataset: sector

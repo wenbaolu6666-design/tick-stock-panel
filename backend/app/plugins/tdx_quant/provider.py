@@ -120,11 +120,14 @@ def _tq_alive() -> bool:
 
 def _tdx_process_running() -> bool:
     try:
+        # bytes 匹配: tasklist 输出为 ANSI 代码页编码, 而 PYTHONUTF8=1 下 text=True
+        # 会按 UTF-8 严格解码导致 reader 线程崩溃、stdout 为空、恒判"未运行"。
+        # 映像名在本机 tasklist 输出为小写 tdxw.exe, 统一小写后匹配, 与代码页/大小写无关。
         out = subprocess.run(
             ["tasklist", "/FI", "IMAGENAME eq TdxW.exe"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, timeout=10,
         )
-        return "TdxW" in (out.stdout or "")
+        return b"tdxw" in (out.stdout or b"").lower()
     except Exception:  # noqa: BLE001
         return False
 

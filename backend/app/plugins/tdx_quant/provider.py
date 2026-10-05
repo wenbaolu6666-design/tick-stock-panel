@@ -214,6 +214,29 @@ def _settle_tdx_windows(pid: int, timeout_seconds: float = 300.0) -> None:
     if minimized:
         logger.info("tdx_quant: TdxW 主窗口已最小化（弹窗未全部关闭）")
 
+def _kick_login_automation() -> None:
+    """后台启动登录自动化 v7（autostart-tdx-login.ps1）：自动点登录/关风险揭示
+    弹窗/关公告，网关上线后由 _settle_tdx_windows 最小化主窗。
+
+    与开机自启链 (autostart-all.ps1 step1b) 共用同一脚本与互斥锁，重复启动
+    自动让位；前台拉起路径原先不带它，登录窗会停在前台等人工——此处补齐，
+    使后端自愈拉起与开机自启行为一致。"""
+    ps1 = Path(__file__).resolve().parents[4] / "autostart-tdx-login.ps1"
+    if not ps1.exists():
+        return
+    for shell in ("pwsh", "powershell"):
+        try:
+            subprocess.Popen(
+                [shell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(ps1)],
+                cwd=str(ps1.parent), creationflags=0x00000008, close_fds=True,
+            )
+            return
+        except FileNotFoundError:
+            continue
+        except Exception:  # noqa: BLE001
+            return
+
+
 def ensure_tq_running(wait_seconds: float = 90.0) -> bool:
     """TQ 网关不可用时前台拉起 TdxW（可见窗口完成自动登录/初始化），
     网关上线后自动把窗口最小化。每进程一次；pytest 跳过。
@@ -250,6 +273,7 @@ def ensure_tq_running(wait_seconds: float = 90.0) -> bool:
             startupinfo=si, close_fds=True,
         )
         launched_pid = proc.pid
+        _kick_login_automation()
     except Exception:  # noqa: BLE001
         return False
 

@@ -62,9 +62,27 @@ def _post(params: dict) -> str:
 
 
 def _fetch_sector_ranking(date: str | None = None) -> pl.DataFrame:
-    """板块强度排行 (概念+行业), 免 Token。列: PlateID/名称/强度/成交额/涨跌%/主力净额。"""
-    if not date:
-        date = _last_trading_date()
+    """板块强度排行 (概念+行业), 免 Token。列: PlateID/名称/强度/成交额/涨跌%/主力净额。
+
+    自动模式(不传 date): _last_trading_date 只回退周末、不认法定节假日,
+    上游对休市日返回空列表——此时逐日回退(最多 12 天)直到命中有数据的交易日。
+    """
+    if date:
+        return _fetch_sector_ranking_once(date)
+    from datetime import date as _date, timedelta as _td
+
+    d = _date.fromisoformat(_last_trading_date())
+    df = pl.DataFrame()
+    for _ in range(12):
+        df = _fetch_sector_ranking_once(d.isoformat())
+        if not df.is_empty():
+            return df
+        d -= _td(days=1)
+    return df
+
+
+def _fetch_sector_ranking_once(date: str) -> pl.DataFrame:
+    """单次拉取指定日期的板块强度排行。"""
     params = {
         "Order": "1", "a": "RealRankingInfo", "st": "30", "c": "ZhiShuRanking",
         **_BASE_PARAMS, "Index": "0",

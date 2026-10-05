@@ -126,6 +126,7 @@ def _tdx_process_running() -> bool:
         out = subprocess.run(
             ["tasklist", "/FI", "IMAGENAME eq TdxW.exe"],
             capture_output=True, timeout=10,
+            creationflags=subprocess.CREATE_NO_WINDOW,  # 后端分离运行,避免 tasklist 闪控制台窗
         )
         return b"tdxw" in (out.stdout or b"").lower()
     except Exception:  # noqa: BLE001

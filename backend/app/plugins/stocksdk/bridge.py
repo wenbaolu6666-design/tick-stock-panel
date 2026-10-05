@@ -61,6 +61,7 @@ def run_job(job: dict, timeout: int = DEFAULT_TIMEOUT) -> dict:
             errors="replace",
             timeout=timeout,
             cwd=str(_HERE),
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except subprocess.TimeoutExpired as e:
         logger.warning("stock-sdk 桥接超时 (op=%s, %ss)", op, timeout)

@@ -171,6 +171,7 @@ def install_plugin(name: str) -> tuple[bool, str]:
                 capture_output=True,
                 text=True,
                 timeout=300,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
         elif runtime == "python":
             import sys
@@ -192,6 +193,7 @@ def install_plugin(name: str) -> tuple[bool, str]:
                     [uv_bin, "pip", "install", "--python", sys.executable, "-r", str(req)],
                     capture_output=True, text=True, timeout=300,
                     env={**__import__("os").environ, "UV_HTTP_TIMEOUT": "300"},
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                 )
                 # exit 2 通常是配置文件解析错误, 绕过配置重试
                 # --no-config 会丢镜像, 显式传国内镜像加速 (与用户 uv.toml 意图一致)
@@ -203,11 +205,13 @@ def install_plugin(name: str) -> tuple[bool, str]:
                          "-r", str(req)],
                         capture_output=True, text=True, timeout=300,
                         env={**__import__("os").environ, "UV_HTTP_TIMEOUT": "300"},
+                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                     )
             else:
                 result = subprocess.run(
                     [sys.executable, "-m", "pip", "install", "-r", str(req)],
                     capture_output=True, text=True, timeout=300,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                 )
         else:
             return False, f"runtime={runtime} 无需安装依赖"
@@ -272,7 +276,8 @@ def uninstall_plugin(name: str) -> tuple[bool, str]:
         cmd = ([uv_bin, "pip", "uninstall", "--python", sys.executable, *pkgs]
                if uv_bin else [sys.executable, "-m", "pip", "uninstall", "-y", *pkgs])
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120,
+                                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             if result.returncode != 0:
                 return False, f"卸载失败: {(result.stderr or '').strip()[-300:]}"
             return True, f"已卸载 {len(pkgs)} 个包"

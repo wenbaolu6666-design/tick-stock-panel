@@ -34,19 +34,26 @@ def _by_id(matrix: dict) -> dict[str, dict]:
 
 
 def test_registry_covers_all_routing_fields():
-    """注册表是能力的单一权威: 可路由能力与偏好键一一对应、无重复;
-    full_minute 为不可路由能力 (field=None, 仅 TickFlow Expert 提供)。"""
+    """注册表是能力的单一权威: 默认路由键是其子集、字段无重复;
+    能力集合随插件拆分增长 (7 → 35), 精确清单在此快照锁定, 新增插槽时有意更新。"""
     routable = [c["field"] for c in CAPABILITY_REGISTRY if c["field"] is not None]
-    assert sorted(routable) == sorted(DEFAULT_CURRENT)
+    assert set(DEFAULT_CURRENT) <= set(routable)
     assert len(set(routable)) == len(routable)
     assert {c["id"] for c in CAPABILITY_REGISTRY} == {
         "realtime", "daily", "minute", "full_minute", "depth5", "adj_factor", "financial",
+        "news", "dragon_tiger", "limit_updown", "market_overview", "consensus", "sector",
+        "hot_list", "anomaly", "auction", "money_flow", "margin", "block_trade", "chip",
+        "corp_events", "research", "announcements", "macro", "options", "valuation",
+        "kzz", "ipo", "survey", "pledge", "score", "fund", "minute_history",
+        "board_minute", "valuation_history",
     }
     full_minute = next(c for c in CAPABILITY_REGISTRY if c["id"] == "full_minute")
     assert full_minute["field"] == "full_minute_data_provider"
     assert full_minute["tf_tier"] == "expert"
     for cap in CAPABILITY_REGISTRY:
-        assert cap["default"] == "tickflow"
+        # 日线/分钟历史锁死 tdx_local (3c27f1e), board_minute/valuation_history
+        # 锁死本地专属源 (2bfd121/c06265b), 其余默认 tickflow
+        assert cap["default"] in {"tickflow", "tdx_local", "board_local", "valuation_local"}
         assert cap["tf_tier"] in ("none", "starter", "pro", "expert")
         assert "follow" not in cap
 
@@ -56,15 +63,17 @@ def test_matrix_without_third_party_sources(monkeypatch):
     _fake_sources(monkeypatch, [])
     matrix = build_capability_matrix(dict(DEFAULT_CURRENT), tickflow_tier="expert")
     assert matrix["tickflow_tier"] == "expert"
-    assert len(matrix["capabilities"]) == 7
+    assert len(matrix["capabilities"]) == len(CAPABILITY_REGISTRY)
     for cap in matrix["capabilities"]:
-        names = [c["name"] for c in cap["candidates"]]
-        assert names == ["tickflow"]
-        assert cap["candidates"][0]["kind"] == "builtin"
-        assert cap["tf_available"] is True
-        assert cap["usable"] is True
-        assert cap["pending"] == []
-        assert cap["current"] == cap["effective"] == "tickflow"
+        # 无第三方源时, 候选只可能是内建 TickFlow 或空 (本地锁死能力缺席即不可用)
+        assert all(c["kind"] == "builtin" for c in cap["candidates"])
+        assert all(c["name"] == "tickflow" for c in cap["candidates"])
+        if cap["current"] == "tickflow":
+            assert cap["tf_available"] is True
+            assert cap["usable"] is True
+            assert cap["current"] == cap["effective"] == "tickflow"
+        else:
+            assert cap["usable"] is False
 
 
 def test_candidates_only_available_unready_goes_pending(monkeypatch):
@@ -281,24 +290,46 @@ def test_api_endpoint_injects_all_routing_preferences(monkeypatch):
     from app.services import preferences
     from app.tickflow import policy
 
-    getter_values = {
-        "realtime_data_provider": "rt-src",
-        "daily_data_provider": "daily-src",
-        "minute_data_provider": "min-src",
-        "full_minute_data_provider": "fm-src",
-        "depth5_data_provider": "d5-src",
-        "adj_factor_provider": "adj-src",
-        "financial_data_provider": "fin-src",
-    }
+    # 与 settings.get_capability_matrix 注入字典逐字段对应 (注册表 35 个路由字段);
+    # financial/adj_factor 的 getter 名不规则, 照实写。
     getter_names = {
         "realtime_data_provider": "get_realtime_data_provider",
         "daily_data_provider": "get_daily_data_provider",
         "minute_data_provider": "get_minute_data_provider",
         "full_minute_data_provider": "get_full_minute_data_provider",
+        "news_data_provider": "get_news_data_provider",
+        "dragon_tiger_data_provider": "get_dragon_tiger_data_provider",
+        "limit_updown_data_provider": "get_limit_updown_data_provider",
+        "market_overview_data_provider": "get_market_overview_data_provider",
+        "consensus_data_provider": "get_consensus_data_provider",
+        "sector_data_provider": "get_sector_data_provider",
+        "hot_list_data_provider": "get_hot_list_data_provider",
+        "anomaly_data_provider": "get_anomaly_data_provider",
+        "auction_data_provider": "get_auction_data_provider",
+        "money_flow_data_provider": "get_money_flow_data_provider",
+        "margin_data_provider": "get_margin_data_provider",
+        "block_trade_data_provider": "get_block_trade_data_provider",
+        "chip_data_provider": "get_chip_data_provider",
+        "corp_events_data_provider": "get_corp_events_data_provider",
+        "research_data_provider": "get_research_data_provider",
+        "announcements_data_provider": "get_announcements_data_provider",
+        "macro_data_provider": "get_macro_data_provider",
+        "options_data_provider": "get_options_data_provider",
+        "valuation_data_provider": "get_valuation_data_provider",
+        "kzz_data_provider": "get_kzz_data_provider",
+        "ipo_data_provider": "get_ipo_data_provider",
+        "survey_data_provider": "get_survey_data_provider",
+        "pledge_data_provider": "get_pledge_data_provider",
+        "score_data_provider": "get_score_data_provider",
+        "fund_data_provider": "get_fund_data_provider",
+        "minute_history_data_provider": "get_minute_history_data_provider",
+        "board_minute_data_provider": "get_board_minute_data_provider",
+        "valuation_history_data_provider": "get_valuation_history_data_provider",
         "depth5_data_provider": "get_depth5_data_provider",
         "adj_factor_provider": "get_adj_factor_provider",
         "financial_data_provider": "get_financial_provider",
     }
+    getter_values = {field: f"pref:{field}" for field in getter_names}
     for field, getter in getter_names.items():
         monkeypatch.setattr(preferences, getter, lambda f=field: getter_values[f])
     monkeypatch.setattr(policy, "base_tier_name", lambda: "pro")

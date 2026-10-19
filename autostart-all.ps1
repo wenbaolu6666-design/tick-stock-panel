@@ -104,9 +104,23 @@ if (-not $listen) {
 LogAll ("step4 frontend listening={0}" -f [bool](netstat -ano | Select-String ':3011\s.*LISTENING'))
 
 # 5) 后端重载能力快照 (TQ 上线后 depth5/full_minute 等 12 插槽恢复)
+# 10-19 实测: 自启后 ~20s 时后端 HTTP 尚未就绪 (端口 LISTENING 但 lifespan 预热中),
+# 固定时序直接 reload 会 "无法连接到远程服务器"。改为探活循环: /docs 2xx 才 reload。
 LogAll "step5 capability reload begin"
-try {
-    Invoke-RestMethod -Method POST -Uri 'http://127.0.0.1:3018/api/settings/data-sources/reload' -TimeoutSec 60 | Out-Null
-    LogAll "step5 reload OK"
-} catch { LogAll ("step5 reload failed: {0}" -f $_.Exception.Message) }
+$apiDead = (Get-Date).AddSeconds(180)
+$reloaded = $false
+while ((Get-Date) -lt $apiDead -and -not $reloaded) {
+    try {
+        $code = 0
+        try { $resp = Invoke-WebRequest -Uri 'http://127.0.0.1:3018/docs' -UseBasicParsing -TimeoutSec 5; $code = [int]$resp.StatusCode } catch {}
+        if ($code -ge 200 -and $code -lt 300) {
+            Invoke-RestMethod -Method POST -Uri 'http://127.0.0.1:3018/api/settings/data-sources/reload' -TimeoutSec 60 | Out-Null
+            LogAll "step5 reload OK"
+            $reloaded = $true
+        } else {
+            Start-Sleep -Seconds 5
+        }
+    } catch { LogAll ("step5 reload failed: {0}" -f $_.Exception.Message); break }
+}
+if (-not $reloaded -and (Get-Date) -lt $apiDead) { } elseif (-not $reloaded) { LogAll "step5 backend API not ready in 180s, reload skipped" }
 LogAll "=== autostart-all end ==="

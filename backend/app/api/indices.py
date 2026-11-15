@@ -12,7 +12,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 
 from app.indicators.pipeline import compute_enriched
 from app.market_time import cn_today
-from app.services import index_sync, kline_sync, preferences, trading_day
+from app.services import index_sync, kline_sync, preferences, trading_day  # noqa: F401
 from app.tickflow.capabilities import Cap
 
 logger = logging.getLogger(__name__)
@@ -47,13 +47,17 @@ def get_index_daily(
 ):
     """读取指数日 K。指数数据使用独立 kline_index_* parquet。"""
     repo = request.app.state.repo
-    end = date.fromisoformat(end_date) if end_date else date.today()
+    # 未传 end_date 时用北京今天。实时注入只在内存缓存命中时补当日 K,
+    # 缓存冷时 parquet 当日行能否进结果取决于这个窗口右端。
+    end = date.fromisoformat(end_date) if end_date else cn_today()
     start = date.fromisoformat(start_date) if start_date else end - timedelta(days=days)
     info = _index_info(repo, symbol)
 
     df = repo.get_index_daily(symbol, start, end)
     if not df.is_empty():
-        return {"symbol": symbol, "name": info.get("name"), "index_info": info, "rows": df.to_dicts(), "source": "index_enriched"}
+        from app.api.kline import _maybe_inject_live_candle
+        rows = _maybe_inject_live_candle(request, symbol, df.to_dicts(), "index")
+        return {"symbol": symbol, "name": info.get("name"), "index_info": info, "rows": rows, "source": "index_enriched"}
 
     capset = request.app.state.capabilities
     if not capset.has(Cap.KLINE_DAILY_BATCH):
@@ -101,7 +105,7 @@ def get_index_minute(
             "rows": [],
             "source": "future",
         }
-    cache_key = (symbol, day.isoformat(), preferences.get_minute_data_provider())
+    cache_key = (symbol, day.isoformat(), kline_sync._selected_minute_provider_name())
     now = time.monotonic()
     with _index_minute_cache_lock:
         hit = _index_minute_cache.get(cache_key)

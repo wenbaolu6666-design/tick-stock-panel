@@ -1,6 +1,6 @@
 """AI 对话助手扩展契约测试。
 
-覆盖: 扩展经 loader 自动注册路由、门控 fail-closed(无 Key / Codex CLI)、
+覆盖: 扩展经 loader 自动注册路由、门控 fail-closed(未配置)、Codex CLI 接入、
 SSE 流式工具循环的事件顺序与逐字 delta、历史截断、本地工具执行与
 摘要白名单、HTTP 流式端点行为。
 """
@@ -14,7 +14,9 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from app.custom.assistant import actions as assistant_actions
 from app.custom.assistant import chat_service
+from app.custom.assistant import routes as assistant_routes
 from app.custom.assistant import tools as assistant_tools
 from app.extensions.loader import configure_backend_extensions
 
@@ -90,16 +92,46 @@ async def test_chat_stream_fails_closed_without_key(monkeypatch: pytest.MonkeyPa
     assert events[-1]["type"] == "done"
 
 
-async def test_chat_stream_fails_closed_for_codex_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("configured", [True, False])
+def test_status_allows_tools_for_configured_codex(monkeypatch, configured) -> None:
+    monkeypatch.setattr(assistant_routes, "ai_configured", lambda: configured)
+    monkeypatch.setattr(assistant_routes, "current_ai_provider", lambda: "codex_cli")
+    monkeypatch.setattr(assistant_routes, "current_ai_model", lambda: "local-model")
+    app = FastAPI()
+    app.include_router(assistant_routes.build_router())
+
+    body = TestClient(app).get("/api/custom/assistant/status").json()
+    assert body == {
+        "configured": configured,
+        "provider": "codex_cli",
+        "model": "local-model",
+        "supports_tools": configured,
+    }
+
+
+async def test_chat_stream_uses_codex_tool_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, Any] = {}
+    script = [
+        {"tool_calls": [{"id": "codex_1", "name": "list_strategies", "arguments": "{}"}]},
+        {"text_pieces": ["你共有 2 个策略。"]},
+    ]
     monkeypatch.setattr(chat_service, "ai_configured", lambda: True)
     monkeypatch.setattr(chat_service, "is_codex_cli_provider", lambda provider=None: True)
+    monkeypatch.setattr(
+        chat_service, "stream_codex_round", _stream_script(script, captured),
+    )
     events = await _collect(await _drain(chat_service.chat_stream(
-        history=[{"role": "user", "content": "hi"}],
+        history=[{"role": "user", "content": "我有哪些策略?"}],
+        engine=_StubEngine(),
     )))
 
-    assert events[0]["type"] == "error"
-    assert events[0]["kind"] == "provider"
-    assert events[-1]["type"] == "done"
+    assert [event["type"] for event in events] == ["tool_call", "tool_result", "delta", "done"]
+    assert events[1]["summary"] == "返回 2 个策略"
+    assert events[2]["content"] == "你共有 2 个策略。"
+    result_message = captured["messages"][1][-1]
+    assert result_message["role"] == "tool"
+    assert result_message["tool_call_id"] == "codex_1"
+    assert json.loads(result_message["content"])["ok"] is True
 
 
 async def test_chat_stream_streams_text_deltas_word_by_word(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -166,14 +198,16 @@ async def test_chat_stream_emits_tool_events_in_order(monkeypatch: pytest.Monkey
     assert json.loads(second_round[-1]["content"])["ok"] is True
 
 
-async def test_chat_stream_stops_at_rounds_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_chat_stream_rounds_checkpoint_prompts_and_stops(monkeypatch: pytest.MonkeyPatch) -> None:
+    """轮次检查点(取代旧 6 轮硬限): 到点弹 rounds_confirm, 拒绝则优雅收尾。"""
     script = [
         {"tool_calls": [{"id": f"c{i}", "name": "list_factors", "arguments": "{}"}]}
-        for i in range(99)
+        for i in range(3)
     ]
     monkeypatch.setattr(chat_service, "ai_configured", lambda: True)
     monkeypatch.setattr(chat_service, "is_codex_cli_provider", lambda provider=None: False)
     monkeypatch.setattr(chat_service, "stream_openai_round", _stream_script(script))
+    monkeypatch.setattr(chat_service, "_round_checkpoint", lambda: 2)
     # list_factors 走核心目录且无需引擎; 简化起见用本地工具拦截执行。
     monkeypatch.setattr(
         assistant_tools,
@@ -181,12 +215,18 @@ async def test_chat_stream_stops_at_rounds_limit(monkeypatch: pytest.MonkeyPatch
         _fake_execute_tool,
     )
 
-    events = await _collect(await _drain(chat_service.chat_stream(
-        history=[{"role": "user", "content": "hi"}],
-    )))
+    events: list[dict[str, Any]] = []
+    async for line in chat_service.chat_stream(history=[{"role": "user", "content": "hi"}]):
+        event = json.loads(line)
+        events.append(event)
+        if event.get("type") == "rounds_confirm":
+            await assistant_actions.registry.resolve(event["call_id"], False)
 
-    error = next(e for e in events if e["type"] == "error")
-    assert error["kind"] == "rounds"
+    confirm = next(e for e in events if e["type"] == "rounds_confirm")
+    assert confirm["reached"] == 2 and confirm["expires_in"] > 0
+    notices = [e for e in events if e["type"] == "notice"]
+    assert notices and "停止" in notices[-1]["message"]
+    assert not any(e["type"] == "error" for e in events)
     assert events[-1]["type"] == "done"
 
 

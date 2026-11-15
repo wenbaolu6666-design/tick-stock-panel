@@ -20,6 +20,8 @@ import shutil
 import time
 import uuid
 from collections.abc import Callable
+from datetime import date
+from datetime import timedelta as _timedelta
 from pathlib import Path
 
 import polars as pl
@@ -32,6 +34,9 @@ from app.enriched_generation import (
 from app.market_time import cn_today
 from app.parquet import scan_daily_parquet, scan_enriched_parquet, scan_parquet_compat
 from app.price_limits import (
+    no_limit_window_days,
+    no_limit_window_margin_days,
+    parse_listing_date,
     polars_is_risk_warning_name,
     polars_limit_price,
     polars_price_limit_pct,
@@ -49,6 +54,7 @@ logger = logging.getLogger(__name__)
 # 增量路径每秒级执行, 若不缓存则每轮 glob + 读所有 JSON + 重编译表达式。
 _custom_signal_exprs: dict[str, pl.Expr] | None = None
 _custom_signal_exprs_today: dict[str, pl.Expr] | None = None
+_custom_prev_fields_cache: set[str] | None = None
 
 
 def _get_custom_signal_exprs() -> dict[str, pl.Expr]:
@@ -66,28 +72,41 @@ def _get_custom_signal_exprs() -> dict[str, pl.Expr]:
 
 
 def _get_custom_signal_exprs_today() -> dict[str, pl.Expr]:
-    """盘中增量热路径专用 (allow_shift=False, 跳过日期偏移条件)。
+    """当日(实时)路径的自定义信号表达式 (模块级缓存)。
 
-    与全量版分开缓存：盘中单日快照上 .shift 跨 symbol 语义不正确,
-    build_expressions(allow_shift=False) 会跳过带偏移的信号, 结果集不同。
+    与全量版的差异: 偏移=1 的字段改读 ``_prev_{field}`` 昨日值 join 列
+    (compute_enriched_today 预先 join, 字段集见 _custom_prev_fields_today);
+    偏移 >1 的信号无法在单日快照求值, 跳过并告警。
     """
-    global _custom_signal_exprs_today
-    if _custom_signal_exprs_today is None:
+    global _custom_signal_exprs_today, _custom_prev_fields_cache
+    if _custom_signal_exprs_today is None or _custom_prev_fields_cache is None:
         from app.strategy import custom_signals
         try:
             sigs = custom_signals.load_all(settings.data_dir)
-            _custom_signal_exprs_today = custom_signals.build_expressions(sigs, allow_shift=False)
+            prev_fields = custom_signals.prev_day_fields(sigs)
+            _custom_prev_fields_cache = prev_fields
+            _custom_signal_exprs_today = custom_signals.build_expressions_prev(
+                sigs, prev_fields
+            )
         except Exception as e:
             logger.warning("custom signals load failed (today): %s", e)
             _custom_signal_exprs_today = {}
+            _custom_prev_fields_cache = set()
     return _custom_signal_exprs_today
+
+
+def _custom_prev_fields_today() -> set[str]:
+    """当日路径需要 join 昨日值的字段集合 (与表达式缓存同源同失效)。"""
+    _get_custom_signal_exprs_today()
+    return _custom_prev_fields_cache or set()
 
 
 def invalidate_custom_signals() -> None:
     """失效自定义信号缓存（保存/删除信号后调用，下次计算重新加载）。"""
-    global _custom_signal_exprs, _custom_signal_exprs_today
+    global _custom_signal_exprs, _custom_signal_exprs_today, _custom_prev_fields_cache
     _custom_signal_exprs = None
     _custom_signal_exprs_today = None
+    _custom_prev_fields_cache = None
 
 
 # enriched parquet 仅存储的列 (14 列)
@@ -101,6 +120,10 @@ ENRICHED_STORAGE_COLS = [
     "consecutive_limit_downs",
     "quote_ts",                                # 行情时间戳(ms): 盘后校验/量比折算/跨天完整性
 ]
+
+# 长任务等待实时发布让出的上限。实时行情每轮持有发布几毫秒到几百毫秒,
+# 60s 足以跨过任意一轮; 超过则说明确有其他长任务在跑, 继续等没有意义。
+_PUBLICATION_CLAIM_WAIT_S = 60.0
 
 
 # ================================================================
@@ -177,27 +200,9 @@ ENRICHED_COLUMNS: dict[str, dict[str, str]] = {
     "rsi_6":                   "6日相对强弱指标",
     "rsi_14":                  "14日相对强弱指标",
     "rsi_24":                  "24日相对强弱指标",
-    # ── 信号列 (bool) ────────────────────────────────────
-    "signal_ma_golden_5_20":   "MA5上穿MA20 (金叉)",
-    "signal_ma_dead_5_20":     "MA5下穿MA20 (死叉)",
-    "signal_ma_golden_20_60":  "MA20上穿MA60",
-    "signal_macd_golden":      "MACD金叉 (DIF上穿DEA)",
-    "signal_macd_dead":        "MACD死叉 (DIF下穿DEA)",
-    "signal_ma20_breakout":    "收盘突破MA20上方",
-    "signal_ma20_breakdown":   "收盘跌破MA20下方",
-    "signal_ma5_breakout":     "收盘突破MA5上方",
-    "signal_ma5_breakdown":    "收盘跌破MA5下方",
-    "signal_ma10_breakout":    "收盘突破MA10上方",
-    "signal_ma10_breakdown":   "收盘跌破MA10下方",
-    "signal_n_day_high":       "创60日新高",
-    "signal_n_day_low":        "创60日新低",
-    "signal_boll_breakout_upper": "突破布林上轨",
-    "signal_boll_breakdown_lower": "跌破布林下轨",
-    "signal_volume_surge":     "放量 (量比≥2.0)",
-    "signal_limit_up":         "涨停",
-    "signal_limit_down":       "跌停",
-    "signal_limit_down_recovery": "跌停翘板(跌停后回升)",
-    "signal_broken_limit_up":  "炸板(最高触及涨停但收盘未封住)",
+    # ── 涨跌停判定价 (bool 信号列已迁移为自定义信号定义, 见 user_data/custom_signals) ──
+    "limit_up_price":         "涨停判定价 (生效价-0.005容差; raw_close>=即涨停)",
+    "limit_down_price":       "跌停判定价 (生效价+0.005容差; raw_close<=即跌停)",
     # ── JOIN 列 (由 repository 从 instruments 表补充) ───
     "name":                    "股票名称 (来自 instruments)",
     "total_shares":            "总股本 (来自 instruments)",
@@ -495,10 +500,26 @@ def compute_indicators(
         )
     if "vol_ratio_5d" in want:
         # 标准量比(同花顺/东财): 今日成交量 / 前5日均量(不含当天)
-        # 盘后全量路径: 当日 volume 是完整全天量, 无需时间折算
-        df = df.with_columns(
-            (pl.col("volume") / pl.col("_vol_ma5_prev")).alias("vol_ratio_5d"),
-        )
+        # 盘后/历史: 当日 volume 是完整全天量, 直接相除。
+        # 盘中 refresh-cache 重建缓存: 最新分区是实时快照的「部分量」,
+        # 与 live 增量路径 (compute_enriched_today) 同口径, 按已交易分钟
+        # 折算到全天量级 — 否则量比被低估约 240/elapsed 倍 (盘中手动重载
+        # 曾出现放量占比 1.8% vs 实时路径 40% 的口径撕裂)。
+        from app.market_time import cn_today, trading_minutes_elapsed
+
+        _vr = pl.col("volume") / pl.col("_vol_ma5_prev")
+        elapsed = trading_minutes_elapsed()
+        if (
+            0 < elapsed < 240
+            and "date" in df.columns
+            and df["date"].max() == cn_today()
+        ):
+            _vr = (
+                pl.when(pl.col("date") == cn_today())
+                .then(pl.col("volume") * (240.0 / elapsed) / pl.col("_vol_ma5_prev"))
+                .otherwise(_vr)
+            )
+        df = df.with_columns(_vr.alias("vol_ratio_5d"))
     _p4mom: list[pl.Expr] = []
     if "momentum_5d" in want:
         _p4mom.append((pl.col("close") / pl.col("close").shift(5).over("symbol") - 1).alias("momentum_5d"))
@@ -576,34 +597,22 @@ def compute_indicators(
     return df
 
 
-SIGNAL_DEPENDENCIES: dict[str, frozenset[str]] = {
-    "signal_ma_golden_5_20": frozenset({"ma5", "ma20"}),
-    "signal_ma_dead_5_20": frozenset({"ma5", "ma20"}),
-    "signal_ma_golden_20_60": frozenset({"ma20", "ma60"}),
-    "signal_macd_golden": frozenset({"macd_dif", "macd_dea"}),
-    "signal_macd_dead": frozenset({"macd_dif", "macd_dea"}),
-    "signal_ma20_breakout": frozenset({"close", "ma20"}),
-    "signal_ma20_breakdown": frozenset({"close", "ma20"}),
-    "signal_ma5_breakout": frozenset({"close", "ma5"}),
-    "signal_ma5_breakdown": frozenset({"close", "ma5"}),
-    "signal_ma10_breakout": frozenset({"close", "ma10"}),
-    "signal_ma10_breakdown": frozenset({"close", "ma10"}),
-    "signal_n_day_high": frozenset({"close", "high_60d"}),
-    "signal_n_day_low": frozenset({"close", "low_60d"}),
-    "signal_boll_breakout_upper": frozenset({"close", "boll_upper"}),
-    "signal_boll_breakdown_lower": frozenset({"close", "boll_lower"}),
-    "signal_volume_surge": frozenset({"vol_ratio_5d"}),
-}
+# 内置信号表达式已全部迁移为 data/user_data/custom_signals/*.json 定义
+# (列名沿用 signal_* 前缀, 由 custom_signals 注入管线计算); 本模块不再
+# 硬编码任何信号布尔表达式 —— 依赖关系见 get_signal_dependencies()。
 
+# compute_limit_signals 的可请求输出 (涨跌停判定价 + 连板状态 + 换手率)。
+# 涨跌停判定价 = 交易所生效价 ∓0.005 容差 (raw_close >= limit_up_price 即涨停),
+# 供迁移后的 signal_limit_* 自定义信号条件引用。
 LIMIT_SIGNAL_OUTPUTS: frozenset[str] = frozenset({
-    "signal_limit_up",
-    "signal_limit_down",
-    "signal_limit_down_recovery",
-    "signal_broken_limit_up",
+    "limit_up_price",
+    "limit_down_price",
     "consecutive_limit_ups",
     "consecutive_limit_downs",
     "turnover_rate",
 })
+
+_LIMIT_PRICE_COLUMNS = frozenset({"limit_up_price", "limit_down_price"})
 
 INDICATOR_COLUMNS: frozenset[str] = frozenset(
     col for col in _ALL_INDICATOR_COLS if not col.startswith("_")
@@ -611,79 +620,102 @@ INDICATOR_COLUMNS: frozenset[str] = frozenset(
 
 
 def get_signal_dependencies() -> dict[str, frozenset[str]]:
-    """返回内置与 JSON 自定义信号的唯一依赖映射。"""
+    """返回 JSON 自定义信号(含迁移自内置的 signal_* 定义)的唯一依赖映射。"""
     from app.strategy import custom_signals
 
-    return {
-        **SIGNAL_DEPENDENCIES,
-        **custom_signals.expression_dependencies(_get_custom_signal_exprs()),
-    }
+    return custom_signals.expression_dependencies(_get_custom_signal_exprs())
 
-def compute_signals(df: pl.DataFrame, needed: set[str] | None = None) -> pl.DataFrame:
-    """从已有指标列计算原子信号布尔列。
+
+def _split_custom_exprs_by_limit_deps(
+    exprs: dict[str, pl.Expr],
+) -> tuple[dict[str, pl.Expr], dict[str, pl.Expr]]:
+    """按根依赖是否含涨跌停判定价列, 把自定义信号表达式拆成 (前置, 后置)。
+
+    后置组必须在 compute_limit_signals 产出 limit_*_price 列之后注入。
+    """
+    from app.strategy import custom_signals
+
+    pre: dict[str, pl.Expr] = {}
+    post: dict[str, pl.Expr] = {}
+    for name, expr in exprs.items():
+        roots = custom_signals.expression_dependencies({name: expr})[name]
+        (post if roots & _LIMIT_PRICE_COLUMNS else pre)[name] = expr
+    return pre, post
+
+
+def _needed_references_limit_prices(needed: set[str]) -> bool:
+    """请求列里是否有自定义信号(定义)的根依赖引用涨跌停判定价。"""
+    from app.strategy import custom_signals
+
+    deps = custom_signals.expression_dependencies(_get_custom_signal_exprs())
+    for name in needed:
+        dep = deps.get(name)
+        if dep and (dep & _LIMIT_PRICE_COLUMNS):
+            return True
+    return False
+
+def compute_signals(
+    df: pl.DataFrame, needed: set[str] | None = None, *, attach_extensions: bool = True,
+) -> pl.DataFrame:
+    """注入自定义信号布尔列 (含迁移自内置的 signal_* 定义)。
 
     输入必须包含 compute_indicators() 产出的指标列。
     """
     if df.is_empty():
         return df
 
-    want = set(SIGNAL_DEPENDENCIES) if needed is None else set(needed) & set(SIGNAL_DEPENDENCIES)
-    expressions: dict[str, pl.Expr] = {
-        "signal_ma_golden_5_20": ((pl.col("ma5") > pl.col("ma20")) &
-         (pl.col("ma5").shift(1).over("symbol") <= pl.col("ma20").shift(1).over("symbol")))
-            .alias("signal_ma_golden_5_20"),
-        "signal_ma_dead_5_20": ((pl.col("ma5") < pl.col("ma20")) &
-         (pl.col("ma5").shift(1).over("symbol") >= pl.col("ma20").shift(1).over("symbol")))
-            .alias("signal_ma_dead_5_20"),
-        "signal_ma_golden_20_60": ((pl.col("ma20") > pl.col("ma60")) &
-         (pl.col("ma20").shift(1).over("symbol") <= pl.col("ma60").shift(1).over("symbol")))
-            .alias("signal_ma_golden_20_60"),
-        "signal_macd_golden": ((pl.col("macd_dif") > pl.col("macd_dea")) &
-         (pl.col("macd_dif").shift(1).over("symbol") <= pl.col("macd_dea").shift(1).over("symbol")))
-            .alias("signal_macd_golden"),
-        "signal_macd_dead": ((pl.col("macd_dif") < pl.col("macd_dea")) &
-         (pl.col("macd_dif").shift(1).over("symbol") >= pl.col("macd_dea").shift(1).over("symbol")))
-            .alias("signal_macd_dead"),
-        "signal_ma20_breakout": ((pl.col("close") > pl.col("ma20")) &
-         (pl.col("close").shift(1).over("symbol") <= pl.col("ma20").shift(1).over("symbol")))
-            .alias("signal_ma20_breakout"),
-        "signal_ma20_breakdown": ((pl.col("close") < pl.col("ma20")) &
-         (pl.col("close").shift(1).over("symbol") >= pl.col("ma20").shift(1).over("symbol")))
-            .alias("signal_ma20_breakdown"),
-        "signal_ma5_breakout": ((pl.col("close") > pl.col("ma5")) &
-         (pl.col("close").shift(1).over("symbol") <= pl.col("ma5").shift(1).over("symbol")))
-            .alias("signal_ma5_breakout"),
-        "signal_ma5_breakdown": ((pl.col("close") < pl.col("ma5")) &
-         (pl.col("close").shift(1).over("symbol") >= pl.col("ma5").shift(1).over("symbol")))
-            .alias("signal_ma5_breakdown"),
-        "signal_ma10_breakout": ((pl.col("close") > pl.col("ma10")) &
-         (pl.col("close").shift(1).over("symbol") <= pl.col("ma10").shift(1).over("symbol")))
-            .alias("signal_ma10_breakout"),
-        "signal_ma10_breakdown": ((pl.col("close") < pl.col("ma10")) &
-         (pl.col("close").shift(1).over("symbol") >= pl.col("ma10").shift(1).over("symbol")))
-            .alias("signal_ma10_breakdown"),
-        "signal_n_day_high": (pl.col("close") >= pl.col("high_60d")).alias("signal_n_day_high"),
-        "signal_n_day_low": (pl.col("close") <= pl.col("low_60d")).alias("signal_n_day_low"),
-        "signal_boll_breakout_upper": (pl.col("close") > pl.col("boll_upper")).alias("signal_boll_breakout_upper"),
-        "signal_boll_breakdown_lower": (pl.col("close") < pl.col("boll_lower")).alias("signal_boll_breakdown_lower"),
-        "signal_volume_surge": (pl.col("vol_ratio_5d") >= 2.0).alias("signal_volume_surge"),
-    }
-    if want:
-        df = df.with_columns([expressions[name] for name in SIGNAL_DEPENDENCIES if name in want])
-
     # 自定义信号（用户配置的字段+运算符+值组合，编译为布尔列）。
     # 扩展表数值列先行 join (ext_ 因子列 = 帧上已有列): 信号条件与评分引用
     # 都按列存在性解析。历史多日帧仅注入时序模式 —— 快照代表"最新值",
     # 历史回看注入会引入未来数据 (CONTRIBUTING §5.3)。
     from app.factors import ext_factors
-    df = ext_factors.attach_ext_columns(df, include_snapshot=False)
+    if attach_extensions:
+        df = ext_factors.attach_ext_columns(df, include_snapshot=False)
     # 条件引用的注册表因子列先复用评分物化管线补算 (虚拟/自定义/复合均可)。
     from app.strategy import custom_signals
     exprs = _get_custom_signal_exprs()
-    df = custom_signals.materialize_factor_columns(df, exprs, needed=needed)
-    df = custom_signals.inject(df, exprs, needed=needed)
+    # 依赖涨跌停判定价的信号 (signal_limit_* 等) 由 compute_limit_signals 末尾注入,
+    # 此处只注入指标列可满足的部分 (避免每帧告警缺列)。
+    pre, _post = _split_custom_exprs_by_limit_deps(exprs)
+    df = custom_signals.materialize_factor_columns(df, pre, needed=needed)
+    df = custom_signals.inject(df, pre, needed=needed)
 
     return df
+
+
+def _attach_no_limit_window(inst_subset: pl.DataFrame) -> pl.DataFrame:
+    """给 instruments 子集附上无涨跌幅窗口列 (单一事实源: app.price_limits)。
+
+    _no_limit_days: 窗口交易日数 (0/null = 不适用, 改革前老股或无上市日)
+    _no_limit_until: 窗口边界日历日 = listing_date + 保守边际 (供 date <= 边界
+                    的向量化比较; 精确交易日序号门控由调用方补足)
+    """
+    if inst_subset.is_empty() or "listing_date" not in inst_subset.columns:
+        return inst_subset
+    info: list[dict] = []
+    for sym, raw in zip(
+        inst_subset["symbol"].to_list(),
+        inst_subset["listing_date"].to_list(),
+        strict=True,
+    ):
+        listing = parse_listing_date(raw)
+        days = no_limit_window_days(sym, listing)
+        if days > 0 and listing is not None:
+            info.append({
+                "symbol": sym,
+                "_no_limit_days": days,
+                "_no_limit_until": listing + _timedelta(days=no_limit_window_margin_days(sym)),
+            })
+    if not info:
+        return inst_subset
+    return inst_subset.join(
+        pl.DataFrame(
+            info,
+            schema={"symbol": pl.Utf8, "_no_limit_days": pl.Int64, "_no_limit_until": pl.Date},
+        ),
+        on="symbol",
+        how="left",
+    )
 
 
 def compute_limit_signals(
@@ -692,13 +724,17 @@ def compute_limit_signals(
     needed: set[str] | None = None,
     historical_shares: pl.DataFrame | None = None,
 ) -> pl.DataFrame:
-    """计算涨跌停相关信号。
+    """计算涨跌停判定价与连板状态 (信号布尔列由自定义信号定义注入)。
 
     产出:
-      signal_limit_up, consecutive_limit_ups
-      signal_limit_down, consecutive_limit_downs
-      signal_limit_down_recovery (跌停翘板)
-      signal_broken_limit_up (炸板: 最高价触及涨停价但收盘未封住)
+      limit_up_price / limit_down_price  涨跌停判定价 (生效价∓0.005 容差;
+                                         raw_close >= limit_up_price 即涨停;
+                                         无涨跌幅限制日为 null)
+      consecutive_limit_ups / consecutive_limit_downs  连板数
+
+    依赖涨跌停判定价的自定义信号 (迁移自内置的 signal_limit_up /
+    signal_limit_down / signal_limit_down_recovery / signal_broken_limit_up)
+    在本函数末尾注入 —— 价格列彼时才存在。
 
     输入必须包含: symbol, date, raw_close, raw_high, raw_low, open, high, low, close,
                   change_pct, vol_ratio_5d。
@@ -707,26 +743,31 @@ def compute_limit_signals(
         return df
 
     want = set(LIMIT_SIGNAL_OUTPUTS) if needed is None else set(needed) & set(LIMIT_SIGNAL_OUTPUTS)
-    if not want:
+    # 请求里可能含自定义信号列 (signal_limit_* 等), 其根依赖引用判定价列 →
+    # 也需要计算价格。仅显式输出为空且无信号引用时短路返回。
+    needed_limit_signals = (
+        needed is not None and _needed_references_limit_prices(set(needed))
+    )
+    if not want and not needed_limit_signals:
         return df
 
-    need_up = bool(want & {"signal_limit_up", "consecutive_limit_ups", "signal_broken_limit_up"})
-    need_down = bool(want & {"signal_limit_down", "consecutive_limit_downs", "signal_limit_down_recovery"})
-    need_price_limits = need_up or need_down
+    need_price_limits = needed is None or bool(
+        want & {"limit_up_price", "limit_down_price", "consecutive_limit_ups", "consecutive_limit_downs"}
+    ) or needed_limit_signals
 
     # 从 instruments 取 ST 标记、流通股本(换手率用)以及最新日涨跌停价
     inst_cols = ["symbol"]
     instrument_needs = set()
     if need_price_limits:
         instrument_needs.add("name")
+        # limit_up 哨兵值 (>= 10000) 同时标记跌停侧「无涨跌停限制」
+        instrument_needs.add("limit_up")
+        instrument_needs.add("limit_down")
+        # listing_date: 注册制新股无涨跌幅窗口判定 (历史行哨兵覆盖不到时兜底)
+        instrument_needs.add("listing_date")
     if "turnover_rate" in want:
         instrument_needs.add("float_shares")
-    if need_price_limits:
-        # limit_up 哨兵值 (>= 10000) 同时标记跌停侧「无涨跌停限制」, 只算跌停信号时也要带上
-        instrument_needs.add("limit_up")
-    if need_down:
-        instrument_needs.add("limit_down")
-    for c in ["name", "float_shares", "limit_up", "limit_down"]:
+    for c in ["name", "float_shares", "limit_up", "limit_down", "listing_date"]:
         if c not in instrument_needs:
             continue
         if c in instruments.columns:
@@ -748,6 +789,9 @@ def compute_limit_signals(
         )
         inst_subset = inst_subset.join(st_flag, on="symbol", how="left")
 
+    if need_price_limits:
+        inst_subset = _attach_no_limit_window(inst_subset)
+
     df = df.join(inst_subset, on="symbol", how="left", suffix="_inst")
 
     if "turnover_rate" in want:
@@ -765,19 +809,26 @@ def compute_limit_signals(
         df = df.with_columns(pl.lit(None).cast(pl.Float64).alias("turnover_rate"))
 
     # 前一日参考收盘价（交易所涨跌停基准价）
-    # 仅在 adj_factor 发生变化（除权除息 XD/DR）时使用前复权昨收作为交易所参考价;
-    # 否则使用原始 raw_close.shift(1) 以避免浮点精度误差。
+    # 仅在 adj_factor 发生变化（除权除息 XD/DR）时用 前复权昨收/当日复权比例 还原到
+    # 当日口径 (即交易所除权参考价 = raw_prev / ex_factor); 否则使用原始
+    # raw_close.shift(1) 以避免浮点精度误差。注意不能直接用前复权昨收 —— 它还被
+    # 更晚的除权事件缩放过, 会把限价压低 F(prev)/F(today) 倍 (除权日误判封板)。
     if not need_price_limits:
-        cleanup = [c for c in ("name", "float_shares", "limit_up", "limit_down") if c in df.columns]
+        cleanup = [c for c in ("name", "float_shares", "limit_up", "limit_down", "listing_date") if c in df.columns]
         return df.drop(cleanup)
 
     _adj_today = pl.col("close") / pl.col("raw_close")
     _adj_yesterday = pl.col("close").shift(1).over("symbol") / pl.col("raw_close").shift(1).over("symbol")
-    _adj_changed = (_adj_today - _adj_yesterday).abs() > 1e-6
+    # raw_close=0 等脏行会让 _adj_today 变 inf: 不守卫的话 then 分支除以 inf 得
+    # 参考价 0, 产出行内一致的"涨停价 0"; 这里要求比例有限且为正, 脏行退化为
+    # 原始昨收口径 (与 matrix 路径的 current_raw>0 守卫对齐)。
+    _adj_changed = (
+        (_adj_today - _adj_yesterday).abs() > 1e-6
+    ) & _adj_today.is_finite() & (_adj_today > 0)
     df = df.with_columns(
         pl.when(_adj_changed)
-        .then(pl.col("close").shift(1).over("symbol"))   # 除权: 使用前复权昨收
-        .otherwise(pl.col("raw_close").shift(1).over("symbol"))  # 正常: 使用原始昨收
+        .then(pl.col("close").shift(1).over("symbol") / _adj_today)  # 除权: 除权参考价
+        .otherwise(pl.col("raw_close").shift(1).over("symbol"))      # 正常: 原始昨收
         .alias("_prev_raw_close")
     )
 
@@ -838,138 +889,125 @@ def compute_limit_signals(
             & pl.col("limit_up").is_not_null()
             & (pl.col("limit_up") >= _SENTINEL)
         )
-    effective_exprs: list[pl.Expr] = [no_price_limit.fill_null(False).alias("_no_price_limit")]
-    if need_up:
-        effective_exprs.append(effective_limit_up.alias("_effective_limit_up"))
-    if need_down:
-        effective_exprs.append(effective_limit_down.alias("_effective_limit_down"))
-    df = df.with_columns(effective_exprs)
-
-    # ── signal_limit_up ──
-    if need_up:
+    # listing_date 窗口兜底: 哨兵只在「维表 as_of == 行情日」那一天生效, 窗口内其余
+    # 交易日 (以及 as_of 漂移后的历史重算) 由 listing_date 判定补齐。精确性用
+    # 「symbol 内日期序号 <= 窗口交易日数」门控 — 新股本地日K必从上市首日起;
+    # 序号不可信的场景 (老股本地历史被裁剪, 首行晚于上市+边际) 不标记, 回退理论价。
+    if "_no_limit_days" in df.columns:
+        _day_rank = pl.col("date").rank("ordinal").over("symbol")
+        _first_date = pl.col("date").min().over("symbol")
+        window_no_limit = (
+            (pl.col("_no_limit_days").fill_null(0) > 0)
+            & (_first_date <= pl.col("_no_limit_until"))
+            & (pl.col("date") <= pl.col("_no_limit_until"))
+            & (_day_rank <= pl.col("_no_limit_days"))
+        )
+        no_price_limit = no_price_limit | window_no_limit.fill_null(False)
+    df = df.with_columns(
+        no_price_limit.fill_null(False).alias("_no_price_limit")
+    )
+    if need_price_limits:
+        # 涨跌停判定价 (含 0.005 交易所容差): raw_close >= limit_up_price 即涨停。
+        # 无涨跌幅限制日 / 昨收缺失 → null (引用它的信号条件为 null, 下游按未命中处理)。
+        _prev_ok = (
+            pl.col("_prev_raw_close").is_not_null() & (pl.col("_prev_raw_close") > 0)
+        )
         df = df.with_columns(
-        pl.when(pl.col("_no_price_limit")).then(False)
-        .when(
-            pl.col("_prev_raw_close").is_not_null()
-            & (pl.col("_prev_raw_close") > 0)
-            & (pl.col("raw_close") > 0)
-        ).then(
-            pl.col("raw_close") >= (pl.col("_effective_limit_up") - 0.005)
-        ).otherwise(None).cast(pl.Boolean)
-        .alias("signal_limit_up")
+            pl.when(pl.col("_no_price_limit") | ~_prev_ok)
+              .then(None)
+              .otherwise(effective_limit_up - 0.005)
+              .alias("limit_up_price"),
+            pl.when(pl.col("_no_price_limit") | ~_prev_ok)
+              .then(None)
+              .otherwise(effective_limit_down + 0.005)
+              .alias("limit_down_price"),
         )
 
-    # ── consecutive_limit_ups ──
+    # ── 连板数 (内部用判定价直接判定涨停/跌停, 不依赖信号列) ──
     if "consecutive_limit_ups" in want:
         df = df.with_columns(
-        (~pl.col("signal_limit_up").fill_null(False))
+        pl.when(pl.col("_no_price_limit") | pl.col("limit_up_price").is_null())
+        .then(None)
+        .when(pl.col("raw_close") > 0)
+        .then(pl.col("raw_close") >= pl.col("limit_up_price"))
+        .otherwise(None).cast(pl.Boolean)
+        .alias("_is_limit_up")
+        ).with_columns(
+        (~pl.col("_is_limit_up").fill_null(False))
         .cast(pl.UInt32)
         .cum_sum()
         .over("symbol")
         .alias("_grp_up")
         ).with_columns(
-        pl.col("signal_limit_up")
+        pl.col("_is_limit_up")
         .cast(pl.UInt32)
         .cum_sum()
         .over("symbol", "_grp_up")
         .cast(pl.UInt32)
         .alias("consecutive_limit_ups")
         ).with_columns(
-        pl.when(pl.col("signal_limit_up").fill_null(False))
+        pl.when(pl.col("_is_limit_up").fill_null(False))
         .then(pl.col("consecutive_limit_ups"))
         .otherwise(0)
         .cast(pl.UInt32)
         .alias("consecutive_limit_ups")
         )
 
-    # ── signal_limit_down ──
-    if need_down:
-        df = df.with_columns(
-        pl.when(pl.col("_no_price_limit")).then(False)
-        .when(
-            pl.col("_prev_raw_close").is_not_null()
-            & (pl.col("_prev_raw_close") > 0)
-            & (pl.col("raw_close") > 0)
-        ).then(
-            pl.col("raw_close") <= (pl.col("_effective_limit_down") + 0.005)
-        ).otherwise(None).cast(pl.Boolean)
-        .alias("signal_limit_down")
-        )
-
-    # ── consecutive_limit_downs ──
     if "consecutive_limit_downs" in want:
         df = df.with_columns(
-        (~pl.col("signal_limit_down").fill_null(False))
+        pl.when(pl.col("_no_price_limit") | pl.col("limit_down_price").is_null())
+        .then(None)
+        .when(pl.col("raw_close") > 0)
+        .then(pl.col("raw_close") <= pl.col("limit_down_price"))
+        .otherwise(None).cast(pl.Boolean)
+        .alias("_is_limit_down")
+        ).with_columns(
+        (~pl.col("_is_limit_down").fill_null(False))
         .cast(pl.UInt32)
         .cum_sum()
         .over("symbol")
         .alias("_grp_down")
         ).with_columns(
-        pl.col("signal_limit_down")
+        pl.col("_is_limit_down")
         .cast(pl.UInt32)
         .cum_sum()
         .over("symbol", "_grp_down")
         .cast(pl.UInt32)
         .alias("consecutive_limit_downs")
         ).with_columns(
-        pl.when(pl.col("signal_limit_down").fill_null(False))
+        pl.when(pl.col("_is_limit_down").fill_null(False))
         .then(pl.col("consecutive_limit_downs"))
         .otherwise(0)
         .cast(pl.UInt32)
         .alias("consecutive_limit_downs")
         )
 
-    # ── signal_limit_down_recovery (跌停翘板) ──
-    # 条件: 当日最低价曾触及跌停价 + 最终没有跌停 + 收阳
-    if "signal_limit_down_recovery" in want:
-        df = df.with_columns(
-        pl.when(pl.col("_no_price_limit")).then(False)
-        .when(
-            pl.col("_prev_raw_close").is_not_null()
-            & (pl.col("_prev_raw_close") > 0)
-            & (pl.col("raw_low") > 0)
-        ).then(
-            (~pl.col("signal_limit_down").fill_null(False))              # 最终没跌停
-            & (pl.col("raw_low") <= pl.col("_effective_limit_down") + 0.005)  # 曾触及跌停(原始价口径, 跌停价为原始价基准)
-            & (pl.col("close") > pl.col("open"))                          # 收阳
-        ).otherwise(None).cast(pl.Boolean)
-        .alias("signal_limit_down_recovery")
-        )
-
-    # ── signal_broken_limit_up (炸板) ──
-    # 条件: 最高价曾触及涨停价 + 最终没有封住涨停
-    if "signal_broken_limit_up" in want:
-        df = df.with_columns(
-        pl.when(pl.col("_no_price_limit")).then(False)
-        .when(
-            pl.col("_prev_raw_close").is_not_null()
-            & (pl.col("_prev_raw_close") > 0)
-            & (pl.col("raw_high") > 0)
-        ).then(
-            (~pl.col("signal_limit_up").fill_null(False))               # 最终没封住涨停
-            & (pl.col("raw_high") >= pl.col("_effective_limit_up") - 0.005)  # 曾触及涨停价
-        ).otherwise(None).cast(pl.Boolean)
-        .alias("signal_broken_limit_up")
-        )
-
     # 清理临时列 + JOIN 引入的 instruments 列 (不存入 enriched)
     cleanup = ["_prev_raw_close", "_limit_pct",
                "_theoretical_limit_up", "_theoretical_limit_down",
-               "_effective_limit_up", "_effective_limit_down", "_no_price_limit",
-               "_grp_up", "_grp_down", "_instrument_as_of"]
+               "_no_price_limit",
+               "_grp_up", "_grp_down", "_instrument_as_of",
+               "_no_limit_days", "_no_limit_until",
+               "_is_limit_up", "_is_limit_down"]
     if "_is_st" in df.columns:
         cleanup.append("_is_st")
     # 清理 join 产生的重复列
     for c in df.columns:
         if c.endswith("_inst"):
             cleanup.append(c)
-    # name / float_shares / limit_up / limit_down 只用于计算, 不存入 enriched
-    for c in ["name", "float_shares", "limit_up", "limit_down"]:
+    # name / float_shares / limit_up / limit_down / listing_date 只用于计算, 不存入 enriched
+    for c in ["name", "float_shares", "limit_up", "limit_down", "listing_date"]:
         if c in df.columns and c != "turnover_rate":
             cleanup.append(c)
-    internal_outputs = {"signal_limit_up", "signal_limit_down"} - want
-    cleanup.extend(c for c in internal_outputs if c in df.columns)
     df = df.drop([c for c in cleanup if c in df.columns])
+
+    # 依赖涨跌停判定价的自定义信号 (signal_limit_up / signal_limit_down /
+    # signal_limit_down_recovery / signal_broken_limit_up) 在价格列产出后注入。
+    if need_price_limits:
+        from app.strategy import custom_signals
+        _pre, post = _split_custom_exprs_by_limit_deps(_get_custom_signal_exprs())
+        if post:
+            df = custom_signals.inject(df, post, needed=needed)
 
     return df
 
@@ -1371,18 +1409,13 @@ _BATCH_TARGET_ROWS = 150_000          # 小内存单批目标行数 (宽表 ~60-
 _BATCH_MIN_SYMBOLS = 50
 _MERGE_DATE_CHUNKS = 15               # 最终合并按日期切 15 块流式执行
 
-_ram_bytes_cache: int | None | bool = False  # False = 未探测
-
 
 def _total_ram_bytes() -> int | None:
-    global _ram_bytes_cache
-    if _ram_bytes_cache is False:
-        try:
-            import psutil
-            _ram_bytes_cache = psutil.virtual_memory().total
-        except Exception:
-            _ram_bytes_cache = None
-    return _ram_bytes_cache  # type: ignore[return-value]
+    try:
+        from app.services.memory_budget import memory_budget
+        return memory_budget().total_bytes
+    except Exception:
+        return None
 
 
 def _adaptive_sym_batch(default_batch: int, rows_per_symbol: int) -> int:
@@ -1493,10 +1526,107 @@ def _compute_storage_batches(
     return pl.concat(parts, how="diagonal_relaxed", rechunk=False)
 
 
+def recompute_daily_symbols(
+    repo, asset_type: str, *, start: date, symbols: list[str] | None,
+    on_batch_done: Callable[[int, int], None] | None = None,
+) -> int:
+    """修补后按股票重算: 输入使用完整本地原始历史, 只发布 start 起的受影响行。
+
+    复用正式的复权、历史股本、停牌及连板计算, 不用已有 enriched 作原始价格前缀。
+    均线/MACD 等宽指标由现有读取链按新版本重新计算。
+    """
+    from app.services import daily_health, data_integrity, preferences
+    from app.tickflow.repository import daily_dirname, enriched_dirname
+
+    root = Path(repo.store.data_dir)
+    files = repo.daily_repair_files(asset_type)
+    if not files:
+        raise ValueError("没有可用于重算的原始日K")
+    raw_scan = scan_daily_parquet(files, cast_options=pl.ScanCastOptions(integer_cast="allow-float"))
+    selected = sorted(set(symbols)) if symbols is not None else raw_scan.select("symbol").unique().collect()["symbol"].to_list()
+    if not selected:
+        raise ValueError("没有可用于重算的股票")
+    factors = _load_factors(root / ("adj_factor_etf" if asset_type == "etf" else "adj_factor") / "all.parquet") if asset_type != "index" else pl.DataFrame()
+    instruments = repo.get_instruments_asset("stock") if asset_type == "stock" else pl.DataFrame()
+    shares = load_share_history(root) if asset_type == "stock" else pl.DataFrame()
+    batch_size = max(1, min(preferences.get_enriched_batch_size(), 200))
+    publication = EnrichedPublication(root, asset_type, recover=True,
+                                     claim_wait_s=_PUBLICATION_CLAIM_WAIT_S, purpose="daily_repair")
+    written = 0
+    total = (len(selected) + batch_size - 1) // batch_size
+    try:
+        for offset in range(0, len(selected), batch_size):
+            batch = selected[offset:offset + batch_size]
+            raw = raw_scan.filter(pl.col("symbol").is_in(batch)).sort(["symbol", "date"]).collect(engine="streaming")
+            bad = data_integrity.invalid_daily_rows(raw)
+            if not bad.is_empty():
+                issues = data_integrity.inspect_invalid_history(root, daily_dirname(asset_type), files, bad)
+                daily_health.record_issues(root, issues)
+                if issues:
+                    first = issues[0]
+                    codes = "、".join(first.symbols[:5]) or "无法定位具体标的"
+                    raise ValueError(
+                        f"{daily_health.ASSET_LABELS[asset_type]}在 {first.day} 的原始历史日K仍异常"
+                        f"（{codes}：{first.reason}）, 未发布指标。"
+                        "已加入自检报告，请到 数据→自检/修补 处理后重试"
+                    )
+                raise ValueError("原始日K未通过校验或在检查期间发生变化，请重新自检或完成当日日K同步后重试，未发布指标")
+            enriched = compute_enriched(
+                raw,
+                factors=factors.filter(pl.col("symbol").is_in(batch)) if not factors.is_empty() else factors,
+                instruments=instruments.filter(pl.col("symbol").is_in(batch)) if not instruments.is_empty() else instruments,
+                historical_shares=shares.filter(pl.col("symbol").is_in(batch)) if not shares.is_empty() else shares,
+            )
+            output = _select_storage_cols(enriched.filter(pl.col("date") >= start))
+            written += repo.replace_enriched_rows(asset_type, output, start=start, symbols=batch, publication=publication)
+            publication.heartbeat()
+            if on_batch_done:
+                on_batch_done(offset // batch_size + 1, total)
+        publication.commit()
+    except BaseException:
+        publication.abandon()
+        raise
+    table = enriched_dirname(asset_type)
+    repo.refresh_view("kline_enriched" if asset_type == "stock" else table, str(root / table / "**/*.parquet"))
+    repo.invalidate_enriched_asset(asset_type)
+    return written
+
+
 def run_pipeline(data_dir: Path | None = None,
                  symbols: list[str] | None = None,
                  new_dates_only: bool = False,
                  on_batch_done: Callable[[int, int], None] | None = None) -> int:
+    """运行盘后管道; 异常中断时释放尚未写入的发布认领。
+
+    真正实现见 _run_pipeline_impl。包装层单独存在, 是为了保证任何异常都
+    能结束发布会话: 计算/校验阶段失败时磁盘没有新数据, abandon 直接把标记
+    恢复 ready; 已写入部分分区时保持 fail-closed, 由心跳超时后的读取方接管。
+    没有这层收尾时, 一次异常就会把 publishing 标记永久留在磁盘上, 之后所有
+    读写持续失败, 且停止实时行情 (运行期唯一频繁的写入方) 也无法自愈。
+    """
+    d = Path(data_dir or settings.data_dir)
+    publication = EnrichedPublication(
+        d, "stock", recover=True, claim_wait_s=_PUBLICATION_CLAIM_WAIT_S,
+    )
+    try:
+        return _run_pipeline_impl(
+            data_dir=data_dir,
+            symbols=symbols,
+            new_dates_only=new_dates_only,
+            on_batch_done=on_batch_done,
+            publication=publication,
+        )
+    except BaseException:
+        publication.abandon()
+        raise
+
+
+def _run_pipeline_impl(data_dir: Path | None = None,
+                       symbols: list[str] | None = None,
+                       new_dates_only: bool = False,
+                       on_batch_done: Callable[[int, int], None] | None = None,
+                       *,
+                       publication: EnrichedPublication) -> int:
     """运行盘后管道:读 kline_daily + adj_factor → 前复权 + 计算存储列 → 写 enriched。
 
     enriched 表仅存储 14 列基础行情窄表 (OHLCV + raw_close/high/low + turnover_rate + 连板数)。
@@ -1523,7 +1653,6 @@ def run_pipeline(data_dir: Path | None = None,
         logger.warning("检测到未完成的 enriched 发布,改为全量重建")
         symbols = None
         new_dates_only = False
-    publication = EnrichedPublication(d, "stock", recover=True)
     daily_dir = d / "kline_daily"
     enriched_base = d / "kline_daily_enriched"
     factor_path = d / "adj_factor" / "all.parquet"
@@ -1566,6 +1695,8 @@ def run_pipeline(data_dir: Path | None = None,
 
         # 2. 为新日期计算 enriched (所有标的)
         if new_date_dirs:
+            # 计算阶段可能持续数分钟且不写分区, 先续一次心跳再开始。
+            publication.heartbeat()
             raw_new = scan_daily_parquet(new_date_dirs[0] / "*.parquet", cast_options=_cast)
             for nd in new_date_dirs[1:]:
                 raw_new = pl.concat([raw_new, scan_daily_parquet(nd / "*.parquet", cast_options=_cast)], how="diagonal_relaxed")
@@ -1649,7 +1780,6 @@ def run_pipeline(data_dir: Path | None = None,
                     publication.write_parquet(date_df_storage, out)
                     written += date_df.height
                 logger.info("除权重算: %d 只, 共写入 %d 行", len(sym_set), written)
-
         publication.commit()
         t_done = _t.perf_counter()
         logger.info("增量管道完成: %.2fs, %d 行", t_done - t0, written)
@@ -1782,8 +1912,17 @@ def run_pipeline(data_dir: Path | None = None,
             if on_batch_done:
                 on_batch_done(batch_start // SYM_BATCH + 1, total_batches)
 
+            # 续期发布心跳: 计算阶段可能长时间不写分区, 不续期会被别的进程
+            # 判为心跳超时并接管, 导致两个写入方同时改 enriched。
+            publication.heartbeat()
+
         # 全量模式: 日期覆盖校验 → 按日期分块流式合并 → 逐分区原子替换
         if not symbols and staging_files:
+            daily_dates = {
+                p.name.removeprefix("date=")
+                for p in daily_dir.glob("date=*")
+                if p.is_dir()
+            }
             existing_dates = {
                 p.name.removeprefix("date=")
                 for p in base.glob("date=*")
@@ -1797,7 +1936,19 @@ def run_pipeline(data_dir: Path | None = None,
                 ds.isoformat() if hasattr(ds, "isoformat") else str(ds)
                 for ds in unique_dates
             }
-            missing_dates = existing_dates - rebuilt_dates
+            # 孤儿分区 = enriched 有而日K已无 (清空日K重拉/手动删目录等历史操作残留):
+            # 重建以日K为源, 永远不可能覆盖它们; 若仍按「必须覆盖全部分区」校验,
+            # 「发布被中断 → 强制全量重建」会与孤儿分区互相锁死, 同步永久失败。
+            # 合并落盘只重写重建范围内的分区、不删旧目录, 孤儿保留原地 — 告警放行,
+            # 覆盖校验只针对日K中仍存在的日期 (防重建读漏日K的真实保护场景不变)。
+            orphan_dates = existing_dates - daily_dates
+            if orphan_dates:
+                sample = ", ".join(sorted(orphan_dates)[:5])
+                logger.warning(
+                    "enriched 存在 %d 个日K已不存在的孤儿分区(保留不动): %s",
+                    len(orphan_dates), sample,
+                )
+            missing_dates = (existing_dates & daily_dates) - rebuilt_dates
             if missing_dates:
                 sample = ", ".join(sorted(missing_dates)[:5])
                 raise RuntimeError(f"全量重建结果缺少已有日期分区,拒绝覆盖: {sample}")
@@ -2130,68 +2281,19 @@ def compute_enriched_today(
             if column in df.columns
         ])
 
-    # ---- 信号 (需要昨天的指标值判断交叉) ----
-    if not prev_enriched.is_empty():
-        sig_prev = prev_enriched.select(
-            "symbol",
-            pl.col("ma5").alias("_prev_ma5"),
-            pl.col("ma10").alias("_prev_ma10"),
-            pl.col("ma20").alias("_prev_ma20"),
-            pl.col("ma60").alias("_prev_ma60"),
-            pl.col("macd_dif").alias("_prev_dif"),
-            pl.col("macd_dea").alias("_prev_dea"),
-            pl.col("boll_upper").alias("_prev_boll_upper"),
-            pl.col("boll_lower").alias("_prev_boll_lower"),
-            pl.col("close").alias("_prev_close_enriched"),
-        )
-        df = df.join(sig_prev, on="symbol", how="left")
+    # ---- 昨日指标值 join (交叉类自定义信号的前1日条件用) ----
+    # 字段集由信号定义驱动 (prev_day_fields); 保留至自定义信号注入后再清理。
+    prev_fields = _custom_prev_fields_today()
+    if not prev_enriched.is_empty() and prev_fields:
+        available = [f for f in sorted(prev_fields) if f in prev_enriched.columns]
+        if available:
+            sig_prev = prev_enriched.select(
+                "symbol",
+                *[pl.col(f).alias(f"_prev_{f}") for f in available],
+            )
+            df = df.join(sig_prev, on="symbol", how="left")
 
-        df = df.with_columns([
-            # MA 金叉/死叉
-            ((pl.col("ma5") > pl.col("ma20")) & (pl.col("_prev_ma5") <= pl.col("_prev_ma20")))
-                .alias("signal_ma_golden_5_20"),
-            ((pl.col("ma5") < pl.col("ma20")) & (pl.col("_prev_ma5") >= pl.col("_prev_ma20")))
-                .alias("signal_ma_dead_5_20"),
-            ((pl.col("ma20") > pl.col("ma60")) & (pl.col("_prev_ma20") <= pl.col("_prev_ma60")))
-                .alias("signal_ma_golden_20_60"),
-            # MACD 金叉/死叉
-            ((pl.col("macd_dif") > pl.col("macd_dea")) & (pl.col("_prev_dif") <= pl.col("_prev_dea")))
-                .alias("signal_macd_golden"),
-            ((pl.col("macd_dif") < pl.col("macd_dea")) & (pl.col("_prev_dif") >= pl.col("_prev_dea")))
-                .alias("signal_macd_dead"),
-            # MA20 突破/跌破
-            ((pl.col("close") > pl.col("ma20")) & (pl.col("_prev_close_enriched") <= pl.col("_prev_ma20")))
-                .alias("signal_ma20_breakout"),
-            ((pl.col("close") < pl.col("ma20")) & (pl.col("_prev_close_enriched") >= pl.col("_prev_ma20")))
-                .alias("signal_ma20_breakdown"),
-            # MA5 突破/跌破
-            ((pl.col("close") > pl.col("ma5")) & (pl.col("_prev_close_enriched") <= pl.col("_prev_ma5")))
-                .alias("signal_ma5_breakout"),
-            ((pl.col("close") < pl.col("ma5")) & (pl.col("_prev_close_enriched") >= pl.col("_prev_ma5")))
-                .alias("signal_ma5_breakdown"),
-            # MA10 突破/跌破
-            ((pl.col("close") > pl.col("ma10")) & (pl.col("_prev_close_enriched") <= pl.col("_prev_ma10")))
-                .alias("signal_ma10_breakout"),
-            ((pl.col("close") < pl.col("ma10")) & (pl.col("_prev_close_enriched") >= pl.col("_prev_ma10")))
-                .alias("signal_ma10_breakdown"),
-            # BOLL 突破
-            (pl.col("close") >= pl.col("boll_upper")).alias("signal_boll_breakout_upper"),
-            (pl.col("close") <= pl.col("boll_lower")).alias("signal_boll_breakdown_lower"),
-        ])
-
-        df = df.drop([
-            c for c in df.columns
-            if c.startswith("_prev_") and c not in {"_prev_consec_up", "_prev_consec_down"}
-        ])
-
-    # N日新高/新低 + 放量
-    df = df.with_columns([
-        (pl.col("close") >= pl.col("high_60d")).alias("signal_n_day_high"),
-        (pl.col("close") <= pl.col("low_60d")).alias("signal_n_day_low"),
-        (pl.col("vol_ratio_5d") >= 2.0).alias("signal_volume_surge"),
-    ])
-
-    # ---- 涨跌停 + 换手率 + 炸板 + 连板 ----
+    # ---- 涨跌停判定价 + 换手率 + 连板 (信号布尔列由定义注入) ----
     if instruments is not None and not instruments.is_empty():
         df = _compute_limit_signals_today(df, instruments)
 
@@ -2224,11 +2326,16 @@ def compute_enriched_today(
     from app.factors import ext_factors
     df = ext_factors.attach_ext_columns(df, include_snapshot=True)
 
-    # 自定义信号（日级实时路径同样注入, 但不支持日期偏移条件 → allow_shift=False）
-    # 复用模块级缓存 _custom_signal_exprs_today: 增量热路径每秒级执行,
-    # 不缓存则每轮 glob + 读所有 JSON + 重编译表达式。失效由 invalidate_custom_signals 统一管理。
+    # 自定义信号（日级实时路径注入; 偏移=1 条件读 _prev_ 昨日值列,
+    # 增量热路径复用模块级缓存 _custom_signal_exprs_today, 失效由
+    # invalidate_custom_signals 统一管理）。
     from app.strategy import custom_signals
     df = custom_signals.inject(df, _get_custom_signal_exprs_today())
+    # 昨日值列使命完成 (连板递推状态 _prev_consec_* 已在上方 drop_cols 清理)
+    df = df.drop([
+        c for c in df.columns
+        if c.startswith("_prev_") and c not in {"_prev_consec_up", "_prev_consec_down"}
+    ])
 
     # 清理 NaN / Inf
     float_cols = [c for c in df.columns if df[c].dtype.is_float()]
@@ -2247,7 +2354,7 @@ def compute_enriched_today(
 def _compute_limit_signals_today(df: pl.DataFrame, instruments: pl.DataFrame) -> pl.DataFrame:
     """盘中增量版的涨跌停/换手率/炸板/连板计算。"""
     inst_cols = ["symbol"]
-    for c in ["float_shares", "limit_up", "limit_down"]:
+    for c in ["float_shares", "limit_up", "limit_down", "listing_date"]:
         if c in instruments.columns:
             inst_cols.append(c)
     if "as_of" in instruments.columns:
@@ -2265,6 +2372,8 @@ def _compute_limit_signals_today(df: pl.DataFrame, instruments: pl.DataFrame) ->
             .unique(subset=["symbol"])
         )
         inst_subset = inst_subset.join(st_flag, on="symbol", how="left")
+
+    inst_subset = _attach_no_limit_window(inst_subset)
 
     df = df.join(inst_subset, on="symbol", how="left", suffix="_inst")
 
@@ -2342,48 +2451,48 @@ def _compute_limit_signals_today(df: pl.DataFrame, instruments: pl.DataFrame) ->
     else:
         effective_limit_down = limit_down_price
 
+    # listing_date 窗口兜底: 维表 as_of 过期/未命中时 (哨兵路径失效), 用上市日
+    # + 保守日历边际近似判定无涨跌幅窗口。单日行情无历史序列, 不做序号门控;
+    # 多标 1-2 天的后果 (漏一个涨停标记) 远轻于误判无涨跌幅日为涨停。
+    if "_no_limit_until" in df.columns:
+        window_no_limit = (
+            (pl.col("_no_limit_days").fill_null(0) > 0)
+            & (trade_date.cast(pl.Date, strict=False) <= pl.col("_no_limit_until"))
+        )
+        no_price_limit = no_price_limit | window_no_limit.fill_null(False)
+
     valid_prev_raw = prev_raw.is_not_null() & (prev_raw > 0)
+    up_ok = valid_prev_raw | has_authoritative_up
+    down_ok = valid_prev_raw | has_authoritative_down
+
+    # 涨跌停判定价 (含 0.005 交易所容差): raw_close >= limit_up_price 即涨停。
+    # 无涨跌幅限制日 / 昨收与权威价均缺失 → null; 引用它的自定义信号
+    # (signal_limit_* 等) 由 compute_enriched_today 末尾按定义注入。
+    df = df.with_columns([
+        pl.when(no_price_limit | ~up_ok).then(None)
+          .otherwise(effective_limit_up - 0.005)
+          .alias("limit_up_price"),
+        pl.when(no_price_limit | ~down_ok).then(None)
+          .otherwise(effective_limit_down + 0.005)
+          .alias("limit_down_price"),
+    ])
+
+    # 连板数: 同向 +1, 不同向归零 (内部用判定价直接判定, 不依赖信号列)
+    # _prev_consec_up / _prev_consec_down 来自 live_agg (昨日 enriched)
     is_limit_up = (
-        pl.when(no_price_limit)
-          .then(False)
-          .when((valid_prev_raw | has_authoritative_up) & (pl.col("raw_close") > 0))
-          .then(pl.col("raw_close") >= (effective_limit_up - 0.005))
+        pl.when(pl.col("limit_up_price").is_null())
+          .then(None)
+          .when(pl.col("raw_close") > 0)
+          .then(pl.col("raw_close") >= pl.col("limit_up_price"))
           .otherwise(None).cast(pl.Boolean)
     )
     is_limit_down = (
-        pl.when(no_price_limit)
-          .then(False)
-          .when((valid_prev_raw | has_authoritative_down) & (pl.col("raw_close") > 0))
-          .then(pl.col("raw_close") <= (effective_limit_down + 0.005))
+        pl.when(pl.col("limit_down_price").is_null())
+          .then(None)
+          .when(pl.col("raw_close") > 0)
+          .then(pl.col("raw_close") <= pl.col("limit_down_price"))
           .otherwise(None).cast(pl.Boolean)
     )
-
-    df = df.with_columns([
-        is_limit_up.alias("signal_limit_up"),
-        is_limit_down.alias("signal_limit_down"),
-        # 跌停翘板
-        pl.when(no_price_limit)
-          .then(False)
-          .when((valid_prev_raw | has_authoritative_down) & (pl.col("raw_low") > 0))
-          .then(
-              (~is_limit_down.fill_null(True))
-              & (pl.col("raw_low") <= effective_limit_down + 0.005)
-              & (pl.col("close") > pl.col("open"))
-          ).otherwise(None).cast(pl.Boolean)
-          .alias("signal_limit_down_recovery"),
-        # 炸板: 最高价曾触及涨停价 + 最终未封住
-        pl.when(no_price_limit)
-          .then(False)
-          .when((valid_prev_raw | has_authoritative_up) & (pl.col("raw_high") > 0))
-          .then(
-              (~is_limit_up.fill_null(True))
-              & (pl.col("raw_high") >= effective_limit_up - 0.005)
-          ).otherwise(None).cast(pl.Boolean)
-          .alias("signal_broken_limit_up"),
-    ])
-
-    # 连板数: 同向 +1, 不同向归零
-    # _prev_consec_up / _prev_consec_down 来自 live_agg (昨日 enriched)
     if "_prev_consec_up" not in df.columns:
         df = df.with_columns(pl.lit(0).cast(pl.UInt32).alias("_prev_consec_up"))
     if "_prev_consec_down" not in df.columns:
@@ -2402,7 +2511,8 @@ def _compute_limit_signals_today(df: pl.DataFrame, instruments: pl.DataFrame) ->
     ])
 
     # 清理
-    cleanup = ["_limit_pct", "_is_st", "limit_up", "limit_down", "_instrument_as_of"]
+    cleanup = ["_limit_pct", "_is_st", "limit_up", "limit_down", "_instrument_as_of",
+               "_no_limit_days", "_no_limit_until", "listing_date"]
     for c in df.columns:
         if c.endswith("_inst"):
             cleanup.append(c)

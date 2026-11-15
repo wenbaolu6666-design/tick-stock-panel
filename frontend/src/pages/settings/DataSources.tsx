@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { ExtensionSlot } from '@/extensions/ExtensionSlot'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
@@ -8,7 +9,6 @@ import {
   Check,
   CheckCircle2,
   Database,
-  ExternalLink,
   Eye,
   EyeOff,
   FileWarning,
@@ -41,9 +41,21 @@ import { QK } from '@/lib/queryKeys'
 import { useCapabilities, usePreferences } from '@/lib/useSharedQueries'
 import { AnchorWrap } from '@/lib/useCardFlash'
 import { CAP_LABELS, TIER_RANK, tierRank, tierStyle, TierTag } from '@/lib/capability-labels'
+import { DEFAULT_ROUTING, buildProviderRouting } from '@/lib/provider-routing'
 import { toast } from '@/components/Toast'
+import { PluginMetadata } from '@/components/data/PluginMetadata'
 import { DataSourceEditor } from './DataSourceEditor'
 import { TickFlowKeySection, TierHelpPopover, useInvalidateTierRelated } from './Keys'
+
+const DATASET_LABEL: Record<string, string> = {
+  realtime: '实时',
+  daily: '日K',
+  minute: '分钟',
+  adj_factor: '除权',
+  depth5: '五档',
+  financial: '财务',
+  full_minute: '全量分钟',
+}
 
 /** 能力图标 (纯展示; 能力清单本身由后端注册表驱动) */
 const CAP_ICON: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -54,9 +66,6 @@ const CAP_ICON: Record<string, React.ComponentType<{ className?: string }>> = {
   adj_factor: Scale,
   financial: Landmark,
 }
-
-/** TickFlow 面板显隐开关: 用户使用自有插件数据源, 第三方档位介绍卡默认隐藏 (改回 true 即恢复) */
-const SHOW_TICKFLOW_PANEL = false
 
 /** TickFlow 档位要求文本: none → 全档位, 其余 → starter+ 形式 */
 function tierReqText(tier: string): string {
@@ -139,16 +148,6 @@ function patchMatrix(
   return { ...matrix, capabilities: caps }
 }
 
-const DEFAULT_ROUTING: Record<ProviderField, string> = {
-  daily_data_provider: 'tickflow',
-  adj_factor_provider: 'tickflow',
-  minute_data_provider: 'tickflow',
-  full_minute_data_provider: 'tickflow',
-  depth5_data_provider: 'tickflow',
-  realtime_data_provider: 'tickflow',
-  financial_data_provider: 'tickflow',
-}
-
 /** 单个能力卡: 当前生效提供方 + 候选切换标签。
  *  candidates 只含当前可提供该能力的源; 未就绪源 (pending) 置灰提示;
  *  生效源无法提供该能力 (usable=False, 无论档位不足还是源未就绪) 时显示琥珀警示。 */
@@ -213,16 +212,13 @@ function CapabilityCard({ cap, pendingKey, onSelect }: {
             <button
               key={c.name}
               type="button"
-              disabled={pendingKey != null || cap.locked === true}
+              disabled={pendingKey != null}
               onClick={() => cap.field != null && onSelect(cap.field, c.name)}
-              title={cap.locked === true
-                ? `「${cap.label}」已锁死为 ${c.display}, 不可切换`
-                : `「${cap.label}」由 ${c.display} 提供`}
+              title={`「${cap.label}」由 ${c.display} 提供`}
               className={tagCls(active)}
             >
               {busy(c.name) && <Loader2 className="h-2.5 w-2.5 animate-spin" />}
               {c.display}
-              {cap.locked === true && <Lock className="h-2.5 w-2.5" />}
             </button>
           )
         })}
@@ -377,7 +373,7 @@ function CapabilityRoutingSection() {
 
 /** 插件 API Key 配置区块 (嵌入插件详情卡, 不再独立成卡)。
  *  先探后存: 后端用候选 Key 实探一次, 无效不落盘; secrets.json 优先于 .env。 */
-function PluginKeyConfig({ plugin }: { plugin: PluginDataSourceItem }) {
+export function PluginKeyConfig({ plugin }: { plugin: PluginDataSourceItem }) {
   const qc = useQueryClient()
   const [keyInput, setKeyInput] = useState('')
   const [revealing, setRevealing] = useState(false)
@@ -421,34 +417,28 @@ function PluginKeyConfig({ plugin }: { plugin: PluginDataSourceItem }) {
 
   return (
     <div>
-      <div className="flex items-center gap-2 mb-2">
+      <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1">
         <KeyRound className="h-3.5 w-3.5 text-secondary" />
-        <h3 className="text-xs font-medium text-foreground">API Key</h3>
-        <span className="text-[10px] text-muted/50 uppercase tracking-wider">{plugin.api_key_env}</span>
+        <h4 className="text-xs font-medium text-foreground">API Key</h4>
+        <span className="break-all font-mono text-[11px] text-secondary">{plugin.api_key_env}</span>
       </div>
 
-      {/* 申请说明 + 官网链接 (对齐 TickFlow Key 区话术) */}
       <p className="text-xs text-secondary leading-relaxed mb-4">
-        {plugin.homepage ? (
-          <>
-            在{' '}
-            <a
-              href={plugin.homepage}
-              target="_blank"
-              rel="noreferrer"
-              className="text-accent hover:underline inline-flex items-baseline gap-0.5"
-            >
-              {plugin.display_name} 官网
-              <ExternalLink className="h-3 w-3 self-center" />
-            </a>
-            {' '}申请获取。
-          </>
-        ) : (
-          <>向该数据源官方申请 API Key。</>
-        )}
-        Key 仅存本地 (secrets.json 优先, 环境变量 {plugin.api_key_env} 兜底),不会上传任何第三方,请妥善保管。
+        向该数据源官方申请 API Key。
+        Key 保存在本地，验证和取数时发送给该数据源用于认证。环境变量可作为后备配置。
       </p>
 
+      {/* 积分计费警示框 (manifest billing/billing_note 声明) */}
+      {plugin.billing === 'points' && (
+        <div className="mb-3 flex items-start gap-2 rounded-lg border border-warning/35 bg-warning/[0.07] px-3 py-2.5">
+          <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />
+          <div className="text-[11px] leading-relaxed text-warning/90">
+            <span className="font-medium">该数据源按积分计费。</span>
+            {plugin.billing_note
+              || '各能力取数均消耗积分;拉取越频繁、范围越大,消耗越高,具体以商城「积分明细」为准。'}
+          </div>
+        </div>
+      )}
       {/* 当前状态 */}
       <div className="flex items-center justify-between mb-4">
         <div className="min-w-0">
@@ -493,6 +483,7 @@ function PluginKeyConfig({ plugin }: { plugin: PluginDataSourceItem }) {
       >
         <div className="relative">
           <input
+            aria-label={`${plugin.display_name} API Key`}
             type={revealing ? 'text' : 'password'}
             placeholder={plugin.available ? '粘贴新 Key 替换当前' : `粘贴 ${plugin.display_name} API Key`}
             value={keyInput}
@@ -536,49 +527,48 @@ function PluginKeyConfig({ plugin }: { plugin: PluginDataSourceItem }) {
   )
 }
 
-
-/** 插件能力芯片: datasets 为基线(每个能力插槽一条, 用注册表中文名),
- *  inventory 里同一 dataset 的多个接口各自拆条(按来源列出), serving 按 dataset 判定。 */
-function renderPluginChips(
-  plugin: PluginDataSourceItem | undefined,
-  declaredDatasets: string[],
-  servingSet: Set<string>,
-  capLabelOf: (id: string) => string,
-): React.ReactNode {
-  const chips: React.ReactNode[] = []
-  const seen = new Set<string>()
-  const chipCls = (serving: boolean) =>
-    `inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] leading-none ${
-      serving ? 'bg-accent/15 text-accent' : 'bg-elevated/60 text-muted/70'
-    }`
-  for (const [i, inv] of (plugin?.inventory ?? []).entries()) {
-    if (!inv?.name) continue
-    const serving = servingSet.has(inv.dataset)
-    chips.push(
-      <span
-        key={`inv-${inv.dataset}-${i}`}
-        title={inv.desc ? `「${inv.name}」：${inv.desc}` : `已适配「${inv.name}」`}
-        className={chipCls(serving)}
-      >
-        {serving ? <Check className="h-2.5 w-2.5" /> : null}
-        {inv.name}
-      </span>,
-    )
-    seen.add(inv.dataset)
-  }
-  for (const ds of declaredDatasets) {
-    if (seen.has(ds)) continue
-    const label = capLabelOf(ds)
-    const serving = servingSet.has(ds)
-    chips.push(
-      <span key={`ds-${ds}`} title={`「${label}」能力插槽`} className={chipCls(serving)}>
-        {serving ? <Check className="h-2.5 w-2.5" /> : null}
-        {label}
-      </span>,
-    )
-  }
-  if (chips.length === 0) return <span className="text-[10px] text-muted/40">未声明能力</span>
-  return <div className="flex flex-wrap gap-1">{chips}</div>
+/** 能力芯片: 三态 — 服务中(高亮+勾) / 已适配(灰) / 档位锁定(锁, 仅 TickFlow)。
+ *  paid (插件 billing="points"): 每个芯片尾标注「积分」角标 — 该能力按积分计费。 */
+function CapabilityChips({ caps, servingSet, isTickFlow, paid = false }: {
+  caps: CapabilityRoute[]
+  servingSet: Set<string>
+  isTickFlow: boolean
+  paid?: boolean
+}) {
+  if (caps.length === 0) return <span className="text-[10px] text-muted/40">未声明能力</span>
+  return (
+    <div className="flex flex-wrap gap-1">
+      {caps.map(cap => {
+        const servingNow = servingSet.has(cap.id)
+        const locked = isTickFlow && !cap.tf_available
+        const cls = servingNow
+          ? 'bg-accent/15 text-accent'
+          : locked
+            ? 'bg-warning/8 text-warning/70'
+            : 'bg-elevated/60 text-muted/70'
+        const title = servingNow
+          ? `正在提供「${cap.label}」${paid ? ' · 积分计费' : ''}`
+          : locked
+            ? `TickFlow 需 ${tierReqText(cap.tf_tier)} · 当前档位未解锁`
+            : `已适配「${cap.label}」${paid ? ' · 积分计费' : ''}`
+        return (
+          <span
+            key={cap.id}
+            title={title}
+            className={`inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] leading-none ${cls}`}
+          >
+            {servingNow
+              ? <Check className="h-2.5 w-2.5" />
+              : locked ? <Lock className="h-2.5 w-2.5" /> : null}
+            {DATASET_LABEL[cap.id] || cap.id}
+            {paid && (
+              <span className="ml-0.5 rounded bg-warning/15 px-1 py-px text-[9px] font-medium leading-none text-warning">积分</span>
+            )}
+          </span>
+        )
+      })}
+    </div>
+  )
 }
 
 export function SettingsDataSourcesPanel({ highlight }: { highlight?: string } = {}) {
@@ -625,7 +615,6 @@ export function SettingsDataSourcesPanel({ highlight }: { highlight?: string } =
   const servingSetOf = (name: string) => new Set(servingDatasets(name))
 
   const matrixCaps = matrix.data?.capabilities ?? []
-  const capLabelOf = (id: string) => matrixCaps.find(c => c.id === id)?.label ?? id
 
   // 数据源集合/插件可用性/档位变化都会改变能力候选集 → 统一连带失效
   const invalidateSources = () => {
@@ -660,18 +649,13 @@ export function SettingsDataSourcesPanel({ highlight }: { highlight?: string } =
       if (name === 'tickflow') {
         return api.updateDataProviders(DEFAULT_ROUTING)
       }
-      const supported = new Set(
-        allItems.find(s => s.name === name)?.datasets ?? []
+      return api.updateDataProviders(
+        buildProviderRouting(
+          name,
+          allItems.find(s => s.name === name)?.datasets ?? [],
+          matrix.data?.capabilities ?? [],
+        ),
       )
-      const pick = (dataset: string) =>
-        supported.has(dataset) ? name : DEFAULT_ROUTING[`${dataset}_data_provider` as ProviderField] ?? 'tickflow'
-      return api.updateDataProviders({
-        daily_data_provider: pick('daily'),
-        adj_factor_provider: pick('adj_factor'),
-        realtime_data_provider: pick('realtime'),
-        minute_data_provider: pick('minute'),
-        financial_data_provider: pick('financial'),
-      })
     },
     onSuccess: (_d, name) => {
       invalidateSources()
@@ -723,10 +707,10 @@ export function SettingsDataSourcesPanel({ highlight }: { highlight?: string } =
       {/* ===== 下区: 数据源 (源为主视图, 配置/接入) ===== */}
       <AnchorWrap highlight={highlight} anchor="data-sources">
       <section className="rounded-card border border-border bg-surface p-5">
-        <div className="flex items-center justify-between mb-4">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
           <div className="flex items-center gap-2.5 min-w-0">
             <Database className="h-4 w-4 text-secondary shrink-0" />
-            <h2 className="text-sm font-medium text-foreground">数据源</h2>
+            <h2 className="shrink-0 text-sm font-medium text-foreground">数据源</h2>
             <span
               className="text-[10px] text-muted/40 font-mono truncate hidden lg:inline max-w-[480px]"
               title={sources.data?.config_dir}
@@ -734,20 +718,24 @@ export function SettingsDataSourcesPanel({ highlight }: { highlight?: string } =
               {sources.data?.config_dir}
             </span>
           </div>
-          <button
-            onClick={() => reload.mutate()}
-            disabled={reload.isPending}
-            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-btn text-xs text-muted hover:text-foreground hover:bg-elevated transition-colors disabled:opacity-50 shrink-0"
-          >
-            <RefreshCw className={`h-3 w-3 ${reload.isPending ? 'animate-spin' : ''}`} />
-            重新加载
-          </button>
+          <div className="ml-auto flex shrink-0 items-center gap-2">
+            <ExtensionSlot name="settings.data-sources.toolbar" context={{ refresh: invalidateSources, selectSource: setSelected }} compact />
+            <button
+              type="button"
+              onClick={() => reload.mutate()}
+              disabled={reload.isPending}
+              className="inline-flex h-8 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-btn border border-border/70 bg-surface px-3 text-xs font-medium text-secondary transition-colors hover:border-border hover:bg-elevated hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 focus-visible:ring-offset-2 focus-visible:ring-offset-surface disabled:pointer-events-none disabled:opacity-50"
+            >
+              <RefreshCw aria-hidden="true" className={`h-3.5 w-3.5 ${reload.isPending ? 'animate-spin' : ''}`} />
+              重新加载
+            </button>
+          </div>
         </div>
 
-        {/* 插件化说明 (置顶黄色提示条): 接入自有行情 → 把文档交给 AI */}
-        <div className="mb-4 flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2.5">
-          <Puzzle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />
-          <div className="text-[11px] leading-relaxed text-muted">
+        {/* 开发说明是辅助信息, 警告色留给需要处理的异常状态。 */}
+        <div className="mb-4 flex items-start gap-2 rounded-btn bg-elevated/40 px-3 py-2.5">
+          <Puzzle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted" />
+          <div className="min-w-0 break-words text-[11px] leading-relaxed text-secondary">
             <span className="text-secondary">数据源已插件化</span>
             ,接入自有行情?把文档发给 AI 即可自动接入:
             <span className="mx-0.5 rounded bg-elevated/70 px-1 py-px font-mono text-[10px] text-secondary">docs/custom-data-source.md</span>
@@ -759,7 +747,7 @@ export function SettingsDataSourcesPanel({ highlight }: { highlight?: string } =
 
         {/* 数据源卡片 - 横向网格 (配置入口) */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
-          {allItems.filter(item => SHOW_TICKFLOW_PANEL || item.name !== 'tickflow').map(item => {
+          {allItems.map(item => {
             const servingSet = servingSetOf(item.name)
             const isTf = item.name === 'tickflow'
             if (isTf) {
@@ -774,12 +762,17 @@ export function SettingsDataSourcesPanel({ highlight }: { highlight?: string } =
             const pluginUnavailable = plugin && !plugin.available
             const installing = installMut.isPending && installMut.variables === item.name
             const uninstalling = uninstallMut.isPending && uninstallMut.variables === item.name
+            const declared = new Set(item.datasets)
+            // TickFlow 展示注册表全量能力 (含档位锁定态); 其余源按声明过滤
+            const chipCaps = isTf
+              ? matrixCaps
+              : matrixCaps.filter(c => declared.has(c.id))
             return (
               <div
                 key={item.name}
                 onClick={() => {
-                  // 未就绪插件仅当支持界面配 Key 时可点开(进详情配置); 其余不可选
-                  if (pluginUnavailable && !plugin?.api_key_env) return
+                  // 外部插件始终可打开管理详情；内置插件沿用 Key 配置入口。
+                  if (pluginUnavailable && !plugin?.api_key_env && plugin?.origin !== 'external') return
                   setSelected(item.name)
                   // 只有用户自定义源 (YAML) 才进编辑器; tickflow 和插件不可编辑
                   if (customNames.has(item.name)) {
@@ -787,7 +780,7 @@ export function SettingsDataSourcesPanel({ highlight }: { highlight?: string } =
                   }
                 }}
                 className={`relative text-left rounded-lg border px-3.5 py-3 transition-all ${
-                  pluginUnavailable && !plugin?.api_key_env
+                  pluginUnavailable && !plugin?.api_key_env && plugin?.origin !== 'external'
                     ? 'border-border/40 bg-elevated/10 opacity-70'
                     : isSelected
                       ? 'border-accent/50 bg-accent/5 ring-1 ring-accent/20 cursor-pointer'
@@ -812,22 +805,27 @@ export function SettingsDataSourcesPanel({ highlight }: { highlight?: string } =
                   )}
                 </div>
 
-                {/* 能力芯片: datasets 基线(中文插槽名) + inventory 的额外接口拆条 */}
+                {/* 能力芯片: 服务中 / 已适配 / 档位锁定 / 积分计费角标 */}
                 <div className="mt-2">
-                  {renderPluginChips(plugin, item.datasets, servingSet, capLabelOf)}
+                  <CapabilityChips caps={chipCaps} servingSet={servingSet} isTickFlow={isTf} paid={plugin?.billing === 'points'} />
                 </div>
+
                 {/* 底部: 状态提示 + 操作 */}
                 <div className="mt-2 pt-2 border-t border-border/50 flex items-center justify-between gap-2 min-h-[22px]">
                   <span className="text-[10px] text-muted/50 truncate min-w-0">
                     {servingCount > 0
                       ? `服务中 ${servingCount} 项能力`
                       : pluginUnavailable
-                        ? (plugin?.runtime === 'none' ? '点击配置 Key' : (plugin?.install_hint || plugin?.status || ''))
+                        ? (plugin?.runtime === 'none' && plugin?.api_key_env
+                            ? '点击配置 Key'
+                            : (plugin?.install_hint || plugin?.status || ''))
                         : ''}
                   </span>
                   <div className="flex items-center gap-1 shrink-0">
                     {pluginUnavailable ? (
-                      plugin?.runtime !== 'none' && (
+                      // 安装/卸载按钮只对"纯依赖型"插件(runtime≠none 且无 api_key_env)显示;
+                      // 带 Key 配置的插件不可用时, 卡片本身可点击进详情配 Key(如 TdxQuant 依赖已内置)。
+                      plugin?.origin !== 'external' && plugin?.runtime !== 'none' && !plugin?.api_key_env && (
                         installing ? (
                           <span className="inline-flex items-center gap-1 text-[10px] text-accent">
                             <RefreshCw className="h-2.5 w-2.5 animate-spin" /> 安装中...
@@ -851,7 +849,7 @@ export function SettingsDataSourcesPanel({ highlight }: { highlight?: string } =
                         >
                           套用
                         </button>
-                        {plugin && plugin?.runtime !== 'none' && (
+                        {plugin && plugin?.origin !== 'external' && plugin?.runtime !== 'none' && !plugin?.api_key_env && (
                           uninstalling ? (
                             <RefreshCw className="h-2.5 w-2.5 animate-spin text-muted" />
                           ) : (
@@ -918,9 +916,9 @@ export function SettingsDataSourcesPanel({ highlight }: { highlight?: string } =
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.15 }}
         >
-          {SHOW_TICKFLOW_PANEL && selected === 'tickflow' ? (
+          {selected === 'tickflow' ? (
             <TickFlowDetail active={servingDatasets('tickflow').length > 0} matrix={matrix.data} />
-          ) : selected !== 'tickflow' && (selected === '__new__' || customNames.has(selected)) ? (
+          ) : selected === '__new__' || customNames.has(selected) ? (
             selected === '__new__' ? (
               <DataSourceEditor
                 key={selected}
@@ -956,6 +954,7 @@ export function SettingsDataSourcesPanel({ highlight }: { highlight?: string } =
               isActive={servingDatasets(selected).length > 0}
               matrixCaps={matrixCaps}
               servingSet={servingSetOf(selected)}
+              refresh={invalidateSources}
             />
           ) : null}
         </motion.div>
@@ -996,7 +995,8 @@ export function SettingsDataSourcesPanel({ highlight }: { highlight?: string } =
 }
 
 /** 插件详情: 介绍 + 适配能力 + Key 配置合并为单一卡片 */
-function PluginDetail({ plugin, isActive, matrixCaps, servingSet }: {
+function PluginDetail({ plugin, isActive, matrixCaps, servingSet, refresh }: {
+  refresh: () => void
   plugin: PluginDataSourceItem
   isActive: boolean
   matrixCaps: CapabilityRoute[]
@@ -1012,7 +1012,7 @@ function PluginDetail({ plugin, isActive, matrixCaps, servingSet }: {
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1 flex-wrap">
-            <h3 className="text-base font-semibold text-foreground">{plugin.display_name}</h3>
+            <h3 className="text-[16px] leading-6 font-semibold text-foreground">{plugin.display_name}</h3>
             <span className="text-[10px] text-muted/50 uppercase tracking-wider">插件 · {plugin.runtime}</span>
             <span className="rounded bg-warning/15 px-1 py-0.5 text-[9px] font-medium leading-none text-warning">第三方</span>
             {isActive && (
@@ -1021,17 +1021,19 @@ function PluginDetail({ plugin, isActive, matrixCaps, servingSet }: {
               </span>
             )}
           </div>
-          {plugin.description && <p className="text-xs text-secondary leading-relaxed">{plugin.description}</p>}
+          <PluginMetadata plugin={plugin} />
           <div className="mt-2">
-            {renderPluginChips(
-              plugin,
-              [...declared],
-              servingSet,
-              (id) => matrixCaps.find(c => c.id === id)?.label ?? id,
-            )}
+            <CapabilityChips
+              caps={matrixCaps.filter(c => declared.has(c.id))}
+              servingSet={servingSet}
+              isTickFlow={false}
+              paid={plugin.billing === 'points'}
+            />
           </div>
         </div>
       </div>
+
+      <ExtensionSlot name="settings.data-sources.detail-actions" context={{ plugin, refresh }} />
 
       {/* 主体: 操作 + Key 配置 (左) | 能力适配表 (右), 布局对齐 TickFlow 详情 */}
       <div className="mt-5 pt-5 border-t border-border grid grid-cols-1 lg:grid-cols-[1fr_1.15fr] gap-6 items-start">
@@ -1044,17 +1046,17 @@ function PluginDetail({ plugin, isActive, matrixCaps, servingSet }: {
           )}
 
           {/* API Key 配置 (声明了 api_key_env 的插件) */}
-          {plugin.api_key_env && (
+          {plugin.api_key_env && plugin.enabled !== false && (
             <div className={plugin.available ? 'mt-4' : ''}>
               <PluginKeyConfig plugin={plugin} />
             </div>
           )}
         </div>
 
-        {/* 能力适配表: 只列该源声明/服务中的能力 (全部能力由上方插槽卡承载, 不重复) */}
+        {/* 能力适配表: 全部能力 × 该源适配状态 (样式对齐 TickFlow 能力档位表) */}
         <div className="min-w-0">
           <div className="rounded-lg border border-border/60 bg-elevated/20 divide-y divide-border/50">
-            {matrixCaps.filter(cap => servingSet.has(cap.id) || declared.has(cap.id)).map(cap => {
+            {matrixCaps.map(cap => {
               const Icon = CAP_ICON[cap.id] ?? Database
               const serving = servingSet.has(cap.id)
               const declaredCap = declared.has(cap.id)
@@ -1063,6 +1065,9 @@ function PluginDetail({ plugin, isActive, matrixCaps, servingSet }: {
                   <Icon className="h-3.5 w-3.5 text-secondary shrink-0" />
                   <div className="flex-1 min-w-0 truncate">
                     <span className="text-xs text-foreground">{cap.label}</span>
+                    {plugin.billing === 'points' && declaredCap && (
+                      <span className="ml-1.5 rounded bg-warning/15 px-1 py-px text-[9px] font-medium leading-none text-warning">积分</span>
+                    )}
                     <span className="ml-1.5 text-[10px] text-muted/60">{cap.desc}</span>
                   </div>
                   {serving ? (
@@ -1162,7 +1167,7 @@ function TickFlowDetail({ active, matrix }: { active: boolean; matrix?: Capabili
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <h2 className="text-base font-semibold text-foreground">TickFlow</h2>
+            <h2 className="text-[16px] leading-6 font-semibold text-foreground">TickFlow</h2>
             <span className="rounded bg-warning/15 px-1.5 py-0.5 text-[10px] font-medium text-warning">第三方</span>
             <AllTiersBadge />
             {active && (

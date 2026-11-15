@@ -5,8 +5,9 @@ import { Activity, Loader2, Lock, RefreshCw } from 'lucide-react'
 import { api, type IndexInstrument, type KlineRow, type MinuteKlineRow } from '@/lib/api'
 import { QK } from '@/lib/queryKeys'
 import { useCapabilities } from '@/lib/useSharedQueries'
-import { EChartsCandlestick, type OHLC } from '@/components/EChartsCandlestick'
-import { EChartsIntraday } from '@/components/EChartsIntraday'
+import type { OHLC } from '@/lib/chart-types'
+import { LightweightDaily } from '@/components/charts/LightweightDaily'
+import { LightweightIntraday } from '@/components/charts/LightweightIntraday'
 
 function defaultRange() {
   const now = new Date()
@@ -177,14 +178,14 @@ export function Indices() {
         <div>
           <h1 className="text-lg font-semibold text-foreground">指数</h1>
           <p className="mt-1 text-xs text-muted">
-            指数使用独立 kline_index_* parquet，不进入股票选股和策略链路。
+            指数使用独立 kline_index_* parquet，不进入股票策略链路。
           </p>
         </div>
         <div className="flex items-center gap-2">
           <button
             onClick={() => syncDaily.mutate()}
             disabled={syncDaily.isPending}
-            className="inline-flex items-center gap-1.5 rounded-btn bg-accent px-3 py-1.5 text-xs font-medium text-base hover:bg-accent/90 disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 rounded-btn bg-accent px-3 py-1.5 text-xs font-medium text-white hover:bg-accent/90 disabled:opacity-50"
           >
             {syncDaily.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
             同步指数日K
@@ -243,12 +244,11 @@ export function Indices() {
           {chartRows.length > 0 && (
             <div className="flex items-start gap-3">
               <div className="min-w-0 flex-1">
-                <EChartsCandlestick
+                <LightweightDaily
                   data={chartRows}
                   height={620}
                   showMA={true}
                   showInfoBar={true}
-                  showMarkers={false}
                   symbol={selectedSymbol}
                   linkedPrice={linkedPrice}
                   onDateClick={(date) => {
@@ -275,8 +275,10 @@ export function Indices() {
                       </div>
                     )}
                     {minuteRows.length > 0 && (
-                      <EChartsIntraday
+                      <LightweightIntraday
                         key={`${selectedSymbol}:${selectedDate}`}
+                        symbol={selectedSymbol}
+                        assetType="index"
                         data={minuteRows}
                         height={620}
                         prevClose={prevClose}

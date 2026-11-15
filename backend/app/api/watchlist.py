@@ -1,19 +1,19 @@
-"""自选股 API。"""
+"""自选 API。"""
 from __future__ import annotations
 
 import logging
 import math
 import time
 from datetime import UTC, date, datetime
-from typing import Callable
+from typing import Callable, Literal
 
 import anyio
 import polars as pl
 from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from app.db_safe import is_valid_ext_ident, quote_ident
-from app.market_time import CN_TZ
+from app.db_safe import quote_ident
+from app.market_time import CN_TZ, cn_today
 from app.price_limits import (
     polars_is_risk_warning_name,
     polars_limit_price,
@@ -92,6 +92,12 @@ class GroupReorderRequest(BaseModel):
     ordered_ids: list[str]
 
 
+class GroupTransferRequest(BaseModel):
+    target_group_id: str
+    symbols: list[str] = Field(min_length=1)
+    action: Literal["move", "copy"]
+
+
 class GroupAssignRequest(BaseModel):
     group_id: str | None = None
 
@@ -145,6 +151,26 @@ def add_batch(req: BatchAddRequest, request: Request):
 @router.get("/groups")
 def list_groups():
     return {"groups": watchlist.list_groups()}
+
+
+class PrepareRequest(BaseModel):
+    symbols: list[str] = Field(min_length=1, max_length=50)
+
+
+@router.post("/prepare")
+def prepare_data(body: PrepareRequest, request: Request):
+    """显式提交自选缺数补齐；普通列表读取不创建后台取数任务。"""
+    from app.services import daily_bootstrap
+
+    selected = list(dict.fromkeys(s.strip() for s in body.symbols))
+    saved = {entry["symbol"] for entry in watchlist.list_symbols()}
+    if any(symbol not in saved for symbol in selected):
+        raise HTTPException(400, "仅支持补齐已加入自选的标的")
+    qs = getattr(request.app.state, "quote_service", None)
+    return {"results": daily_bootstrap.prepare(
+        request.app.state.repo, request.app.state.capabilities, selected, cn_today(),
+        on_updated=qs.notify_data_updated if qs else None,
+    )}
 
 
 @router.post("/groups")
@@ -319,6 +345,15 @@ def assign_group(symbol: str, req: GroupAssignRequest, request: Request):
     return {"symbols": _with_names(rows, request)}
 
 
+@router.post("/groups/{group_id}/transfer")
+def transfer_group_members(group_id: str, req: GroupTransferRequest, request: Request):
+    try:
+        rows, changed = watchlist.transfer_members(group_id, req.target_group_id, req.symbols, req.action)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    return {"symbols": _with_names(rows, request), "changed": changed}
+
+
 @router.post("/groups/{group_id}/members/{symbol}")
 def add_member(group_id: str, symbol: str, request: Request):
     """把标的加入分组(多组成员关系: 不影响其他分组)。"""
@@ -358,7 +393,7 @@ def clear_all():
 
 # 自选页需要的列
 _WATCHLIST_COLS = [
-    "symbol", "close", "open", "high", "low", "prev_close", "volume",
+    "symbol", "date", "close", "open", "high", "low", "prev_close", "volume", "quote_ts",
     "change_pct", "change_amount", "amount",
     "turnover_rate",
     "amplitude", "annual_vol_20d",
@@ -456,12 +491,21 @@ def _added_base_closes(
     )
 
 
+def _latest_watchlist_rows(frame: pl.DataFrame, symbols: list[str]) -> pl.DataFrame:
+    """仅收敛请求的标的，按日期和行情时间选取完整行，避免关联放大。"""
+    selected = frame.filter(pl.col("symbol").is_in(symbols))
+    order = [column for column in ("date", "quote_ts") if column in selected.columns]
+    if order:
+        selected = selected.sort(order, descending=True, nulls_last=True, maintain_order=True)
+    return selected.unique(subset=["symbol"], keep="first", maintain_order=True)
+
+
 @router.get("/enriched")
 def watchlist_enriched(
     request: Request,
     ext_columns: str | None = Query(None, description="逗号分隔的 ext 列: config_id.field_name"),
 ):
-    """自选股 enriched 数据 — 直接从 enriched 最新日读取, 无重计算。
+    """自选 enriched 数据 — 直接从 enriched 最新日读取, 无重计算。
 
     仅两列为按行向量化现算 (不落盘): 涨跌停价, 以及「加入后涨跌幅」(pct_since_added,
     以加入日收盘价为基准)。本端点在行情 tick 热路径上被反复调用, 故不做历史 scan 兜底。
@@ -475,7 +519,8 @@ def watchlist_enriched(
     entries = watchlist.list_symbols()
     symbols = [r["symbol"] for r in entries]
     if not symbols:
-        return {"rows": [], "as_of": None, "elapsed_ms": 0}
+        return {"rows": [], "as_of": None, "elapsed_ms": 0,
+                "dates": {"stock": None, "etf": None, "index": None}}
 
     # 按资产拆分自选 symbol; ETF enriched 是独立缓存, 仅自选真的含 ETF 才去加载
     # (避免无 ETF 用户在缓存冷启动时触发 ETF 全量懒加载)
@@ -490,13 +535,13 @@ def watchlist_enriched(
     # 以自选列表为主表 LEFT JOIN enriched, 保证自选的每一只都返回一行;
     # 不在 enriched 缓存里的标的 (新股/冷门股/新用户未同步) 指标为 null, 前端渲染为 "—".
     # 旧实现是 df_e.filter(is_in(stock_symbols)), 方向反了 (以 enriched 为主),
-    # 会把不在缓存 universe 里的自选股静默丢弃.
+    # 会把不在缓存 universe 里的自选静默丢弃.
     if stock_symbols:
         watchlist_df = pl.DataFrame({"symbol": stock_symbols})
         if df_e.is_empty():
             df = watchlist_df
         else:
-            df = watchlist_df.join(df_e, on="symbol", how="left")
+            df = watchlist_df.join(_latest_watchlist_rows(df_e, stock_symbols), on="symbol", how="left")
     else:
         df = pl.DataFrame()
 
@@ -507,7 +552,7 @@ def watchlist_enriched(
         etf_watchlist_df = pl.DataFrame({"symbol": etf_symbols})
         if not df_etf_all.is_empty():
             # ETF 同样以自选为主表 LEFT JOIN, 缺失标的指标为 null
-            df_etf = etf_watchlist_df.join(df_etf_all, on="symbol", how="left")
+            df_etf = etf_watchlist_df.join(_latest_watchlist_rows(df_etf_all, etf_symbols), on="symbol", how="left")
         else:
             df_etf = etf_watchlist_df
         df = df_etf if df.is_empty() else pl.concat([df, df_etf], how="diagonal_relaxed")
@@ -518,7 +563,7 @@ def watchlist_enriched(
         df_idx_all, index_date = repo.get_enriched_latest_asset("index")
         idx_watchlist_df = pl.DataFrame({"symbol": index_symbols})
         if not df_idx_all.is_empty():
-            df_idx = idx_watchlist_df.join(df_idx_all, on="symbol", how="left")
+            df_idx = idx_watchlist_df.join(_latest_watchlist_rows(df_idx_all, index_symbols), on="symbol", how="left")
         else:
             df_idx = idx_watchlist_df
         df = df_idx if df.is_empty() else pl.concat([df, df_idx], how="diagonal_relaxed")
@@ -526,13 +571,24 @@ def watchlist_enriched(
     # as_of 取三类缓存中较旧者
     dates = [d for d in (cache_date if stock_symbols else None, etf_date, index_date) if d is not None]
     as_of = min(dates) if dates else None
+    # 按资产类型的行情日期 (ISO): as_of 是三类取 min 的全局值, 分不清哪类过期。
+    # 前端分时缩略图续画据此判定「该类行情是否为当日」—— ETF 未开实时拉取时
+    # etf 缓存停在旧日, 过期 close 拼到当日分钟K尾部会画出错价 (issue 场景)。
+    # None = 未加载/无缓存, 前端一律按不新鲜处理 (fail-closed)。
+    quote_dates = {
+        "stock": str(cache_date) if cache_date else None,
+        "etf": str(etf_date) if etf_date else None,
+        "index": str(index_date) if index_date else None,
+    }
     if df.is_empty():
-        return {"rows": [], "as_of": str(as_of) if as_of else None, "elapsed_ms": 0}
+        return {"rows": [], "as_of": str(as_of) if as_of else None,
+                "elapsed_ms": 0, "dates": quote_dates}
 
     # JOIN float_shares (仅股票有) + 名称 (股票/ETF 统一走 get_name_map)
     df_i = repo.get_instruments()
     if not df_i.is_empty() and "float_shares" in df_i.columns:
-        df = df.join(df_i.select(["symbol", "float_shares"]), on="symbol", how="left")
+        shares = df_i.select(["symbol", "float_shares"]).unique(subset=["symbol"], keep="first")
+        df = df.join(shares, on="symbol", how="left")
     name_map = repo.get_name_map(df["symbol"].to_list())
     df = df.with_columns(
         pl.col("symbol").replace_strict(name_map, default=None, return_dtype=pl.Utf8).alias("name")
@@ -544,8 +600,28 @@ def watchlist_enriched(
         pl.col("symbol").replace_strict(asset_map, default="stock", return_dtype=pl.Utf8).alias("asset_type")
     )
 
+    # 定向补齐仅作缺失行回退，不把旧日K注入全市场实时快照。
+    prepared_reader = getattr(repo, "get_prepared_daily", None)
+    if callable(prepared_reader):
+        parts = []
+        for asset, group in (("stock", stock_symbols), ("etf", etf_symbols), ("index", index_symbols)):
+            missing = df.filter(pl.col("symbol").is_in(group))
+            if "close" in missing.columns:
+                missing = missing.filter(pl.col("close").is_null())
+            if missing.height:
+                fallback = prepared_reader(asset, missing["symbol"].to_list())
+                if isinstance(fallback, pl.DataFrame) and not fallback.is_empty():
+                    parts.append(_latest_watchlist_rows(fallback, missing["symbol"].to_list()).with_columns(
+                        pl.lit(asset).alias("asset_type"), pl.lit(True).alias("prepared_daily"),
+                    ))
+        if parts:
+            prepared = pl.concat(parts, how="diagonal_relaxed")
+            df = pl.concat([df.filter(~pl.col("symbol").is_in(prepared["symbol"].to_list())), prepared], how="diagonal_relaxed")
+            # 回退行也由维表统一补名称/股本。
+            df = df.with_columns(pl.col("symbol").replace_strict(name_map, default=None, return_dtype=pl.Utf8).alias("name"))
+
     # 选择内置需要的列
-    keep = [c for c in _WATCHLIST_COLS + ["name", "float_shares", "asset_type"] if c in df.columns]
+    keep = [c for c in _WATCHLIST_COLS + ["name", "float_shares", "asset_type", "prepared_daily"] if c in df.columns]
     df = df.select(keep)
 
     # 涨跌停价 (交易所整数分半进位口径, 仅股票): prev_close/名称已在行上, 对自选的
@@ -621,13 +697,13 @@ def watchlist_enriched(
     if ext_specs:
         db = repo.store.db
         data_dir = repo.store.data_dir
-        from app.services.ext_data import ExtConfigStore
         from app.api.ext_data import _read_ext_dataframe
+        from app.services.ext_data import ExtConfigStore, collapse_ext_rows_at
 
         ext_store = ExtConfigStore(data_dir)
         configs = {c.id: c for c in ext_store.load_all()}
 
-        for config_id, field_name in ext_specs:
+        for config_id, field_name, at in ext_specs:
             view_name = f"ext_{config_id}"
             ext_col_name = f"{config_id}__{field_name}"
             try:
@@ -640,10 +716,11 @@ def watchlist_enriched(
                         f"SELECT symbol, {quote_ident(field_name)} FROM {view_name}"
                     ).arrow())
                 if not ext_df.is_empty() and "symbol" in ext_df.columns:
+                    time_field = cfg.pull.time_field if cfg and cfg.pull else None
+                    # 收敛在 select 之前: 时间列被裁掉后 collapse 会静默回退末行
                     ext_df = (
-                        ext_df
+                        collapse_ext_rows_at(ext_df, at, time_field)
                         .select(["symbol", field_name])
-                        .unique(subset=["symbol"], keep="last")
                         .rename({field_name: ext_col_name})
                     )
                     df = df.join(ext_df.select(["symbol", ext_col_name]), on="symbol", how="left")
@@ -664,6 +741,9 @@ def watchlist_enriched(
                     except Exception as e2:
                         logger.debug("ext join fallback failed for %s.%s: %s", config_id, field_name, e2)
 
+    # 最终输出也保证每标的一行，兼容旧名单或附加数据中的重复记录。
+    df = df.unique(subset=["symbol"], keep="first", maintain_order=True)
+
     # sanitize NaN / Inf
     float_cols = [c for c in df.columns if df[c].dtype.is_float()]
     if float_cols:
@@ -681,20 +761,21 @@ def watchlist_enriched(
     df = df.sort("_sort_order").drop("_sort_order")
 
     rows = df.to_dicts()
+    from app.services.quote_freshness import QuoteFreshness
+
+    freshness = QuoteFreshness.for_request(request)
+    for row in rows:
+        row["quote_freshness"] = freshness.describe(row)
     elapsed = (time.perf_counter() - t0) * 1000
-    return {"rows": rows, "as_of": str(as_of) if as_of else None, "elapsed_ms": elapsed}
+    return {"rows": rows, "as_of": str(as_of) if as_of else None,
+            "elapsed_ms": elapsed, "dates": quote_dates}
 
 
-def _parse_ext_columns(ext_columns: str) -> list[tuple[str, str]]:
-    """解析 'config_id1.field1,config_id2.field2' 为 [(config_id, field_name), ...]"""
-    result = []
-    for part in ext_columns.split(","):
-        part = part.strip()
-        if "." not in part:
-            continue
-        config_id, field_name = part.split(".", 1)
-        config_id = config_id.strip()
-        field_name = field_name.strip()
-        if config_id and field_name and is_valid_ext_ident(config_id):
-            result.append((config_id, field_name))
-    return result
+def _parse_ext_columns(ext_columns: str) -> list[tuple[str, str, str | None]]:
+    """解析并去重扩展列；同一输出列存在歧义时返回 400。"""
+    from app.services.ext_data import parse_ext_columns
+
+    try:
+        return parse_ext_columns(ext_columns)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc

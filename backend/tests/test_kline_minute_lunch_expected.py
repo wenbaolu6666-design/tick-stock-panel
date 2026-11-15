@@ -14,6 +14,7 @@
 """
 from __future__ import annotations
 
+import json
 from datetime import date, datetime, timedelta
 from unittest.mock import MagicMock
 
@@ -70,6 +71,11 @@ LUNCH_TIMES = [(11, 35), (11, 50), (12, 0)]
 class _FakeRepo:
     def __init__(self, bars: int = 120) -> None:
         self._bars = bars
+        # /minute 与 /minute-batch 读取 repo.store.data_dir 判断分钟基准标记
+        import tempfile
+        from types import SimpleNamespace
+        from pathlib import Path
+        self.store = SimpleNamespace(data_dir=Path(tempfile.mkdtemp()))
 
     def resolve_asset_type(self, symbol: str) -> str:
         return "stock"
@@ -152,7 +158,7 @@ def test_minute_batch_lunch_break_serves_complete_morning_from_local(clock, hour
     set_time, _, sync = clock
     set_time(hour, minute)
 
-    payload = kline_api.get_minute_batch(_batch_request(), {"symbols": [SYMBOL]})
+    payload = json.loads(kline_api.get_minute_batch(_batch_request(), {"symbols": [SYMBOL]}).body)
 
     assert len(payload["data"].get(SYMBOL, [])) == 120
     sync.assert_not_called()
@@ -163,7 +169,7 @@ def test_minute_batch_trading_session_expected_unchanged(clock, hour, minute, ba
     set_time, _, sync = clock
     set_time(hour, minute)
 
-    payload = kline_api.get_minute_batch(_batch_request(bars), {"symbols": [SYMBOL]})
+    payload = json.loads(kline_api.get_minute_batch(_batch_request(bars), {"symbols": [SYMBOL]}).body)
 
     assert len(payload["data"].get(SYMBOL, [])) == bars
     sync.assert_not_called()

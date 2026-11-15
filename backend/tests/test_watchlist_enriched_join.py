@@ -5,7 +5,7 @@
   (新股 / 冷门股 / 新用户未同步). 缺失标的的指标字段为 null, 前端渲染为 "—".
 
 旧 bug: `df_e.filter(is_in(stock_symbols))` 以 enriched 为主表, 会把不在缓存
-universe 里的自选股静默丢弃.
+universe 里的自选静默丢弃.
 """
 from __future__ import annotations
 
@@ -141,7 +141,7 @@ def test_all_watchlist_missing_from_enriched(monkeypatch):
 
 
 def test_partial_coverage_preserves_count(monkeypatch):
-    """多只自选, 部分覆盖: 返回行数必须 == 自选股票数."""
+    """多只自选, 部分覆盖: 返回行数必须 == 自选只数."""
     syms = ["600519", "000001", "999888", "888999"]
     monkeypatch.setattr(wl_api.watchlist, "list_symbols",
                         lambda: [{"symbol": s} for s in syms])
@@ -576,4 +576,134 @@ def test_empty_watchlist_returns_no_rows(monkeypatch):
     )
 
     res = wl_api.watchlist_enriched(_make_request(repo), ext_columns=None)
-    assert res == {"rows": [], "as_of": None, "elapsed_ms": 0}
+    assert res == {"rows": [], "as_of": None, "elapsed_ms": 0,
+                   "dates": {"stock": None, "etf": None, "index": None}}
+
+
+# ===== 按资产类型行情日期 (dates) =====
+
+def test_dates_reports_per_asset_type_quote_dates(monkeypatch):
+    """dates 契约: 股票当日实时 / ETF 停在旧日 (未开实时拉退回旧日K缓存)。
+
+    前端分时缩略图续画只对 dates[asset_type] == 当日 的标的用行情 close 拼尾K;
+    ETF 旧日期 (如 09-24 收盘 1.105) 不得被拼进当日 1.03x 的分钟序列尾部。
+    """
+    monkeypatch.setattr(wl_api.watchlist, "list_symbols",
+                        lambda: [{"symbol": "600519.SH"}, {"symbol": "510300.SH"}])
+    repo = _FakeRepo(
+        enriched_df=_enriched_df([("600519.SH", 1900.0, 1.2, 1e9)]),
+        enriched_date="2026-10-08",
+        etf_df=_enriched_df([("510300.SH", 4.0, 0.5, 1e8)]),
+        etf_date="2026-09-29",
+        etf_set={"510300.SH"},
+    )
+
+    res = wl_api.watchlist_enriched(_make_request(repo), ext_columns=None)
+
+    assert res["dates"] == {"stock": "2026-10-08", "etf": "2026-09-29", "index": None}
+    # 全局 as_of 取 min, 与分类型 dates 各自独立 (as_of 分不清哪类过期)
+    assert res["as_of"] == "2026-09-29"
+
+
+def test_dates_etf_none_when_no_etf_in_watchlist(monkeypatch):
+    """自选无 ETF 时不触发 ETF 缓存懒加载 → dates.etf = None (前端按不新鲜处理)。
+
+    锁定端点「仅自选真的含 ETF 才去加载」的懒加载契约不被 dates 字段破坏。
+    """
+    monkeypatch.setattr(wl_api.watchlist, "list_symbols",
+                        lambda: [{"symbol": "600519.SH"}])
+    repo = _FakeRepo(
+        enriched_df=_enriched_df([("600519.SH", 1900.0, 1.2, 1e9)]),
+        enriched_date="2026-10-08",
+        # etf_df 有数据但自选无 ETF: 端点不应调用 get_enriched_latest_asset("etf")
+        etf_df=_enriched_df([("510300.SH", 4.0, 0.5, 1e8)]),
+        etf_date="2026-09-29",
+    )
+
+    res = wl_api.watchlist_enriched(_make_request(repo), ext_columns=None)
+
+    assert res["dates"]["stock"] == "2026-10-08"
+    assert res["dates"]["etf"] is None
+
+
+@pytest.mark.parametrize("date_columns", ["both", "none", "latest_only"])
+def test_legacy_instrument_files_keep_one_watchlist_row(monkeypatch, tmp_path, date_columns):
+    from app.config import settings
+    from app.services import watchlist
+    from app.tickflow.repository import DataStore, KlineRepository
+
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+    symbol = "600327.SH"
+    folder = tmp_path / "instruments"
+    folder.mkdir()
+    old = {"symbol": [symbol], "name": ["旧名称"], "float_shares": [100.0]}
+    new = {"symbol": [symbol], "name": ["新名称"], "float_shares": [200.0]}
+    if date_columns != "none":
+        new["as_of"] = [date(2026, 11, 11)]
+    if date_columns == "both":
+        old["as_of"] = [date(2026, 11, 10)]
+    legacy_path = folder / ("a-legacy.parquet" if date_columns == "latest_only" else "part.parquet")
+    pl.DataFrame(old).write_parquet(legacy_path)
+    pl.DataFrame(new).write_parquet(folder / "instruments.parquet")
+    repo = KlineRepository(DataStore(tmp_path))
+    repo._etf_instruments_cache = pl.DataFrame()
+    repo._index_instruments_cache = pl.DataFrame()
+    repo._enriched_cache = _enriched_df([(symbol, 6.53, 0.0993, 1e8)])
+    repo._enriched_cache_date = date(2026, 11, 11)
+    watchlist.add(symbol)
+
+    result = wl_api.watchlist_enriched(_make_request(repo), ext_columns=None)
+
+    assert repo.get_instruments().height == 1
+    row, = result["rows"]
+    assert row["symbol"] == symbol and row["close"] == 6.53
+    if date_columns != "none":
+        assert row["name"] == "新名称" and row["float_shares"] == 200.0
+    assert legacy_path.exists()
+    assert (folder / "instruments.parquet").exists()
+
+
+@pytest.mark.parametrize("asset", ["stock", "etf", "index"])
+def test_duplicate_quote_rows_use_latest_complete_row(monkeypatch, asset):
+    from datetime import datetime
+
+    from app.market_time import CN_TZ
+
+    symbol = {"stock": "600327.SH", "etf": "510300.SH", "index": "000001.SH"}[asset]
+    pending = "999999.SH"
+    monkeypatch.setattr(wl_api.watchlist, "list_symbols", lambda: [{"symbol": pending}, {"symbol": symbol}])
+    ts = int(datetime(2026, 11, 11, 10, 30, tzinfo=CN_TZ).timestamp() * 1000)
+    quotes = pl.DataFrame({
+        "symbol": [symbol] * 3,
+        "date": [date(2026, 11, 10), date(2026, 11, 11), date(2026, 11, 11)],
+        "quote_ts": [ts - 86400000, ts, ts - 1000],
+        "close": [5.0, 6.53, 6.50], "amount": [10.0, 30.0, 20.0],
+    })
+    repo = _FakeRepo(
+        enriched_df=quotes if asset == "stock" else pl.DataFrame(),
+        enriched_date=date(2026, 11, 11),
+        etf_df=quotes if asset == "etf" else None,
+        index_df=quotes if asset == "index" else None,
+        etf_date=date(2026, 11, 11), index_date=date(2026, 11, 11),
+        etf_set={symbol} if asset == "etf" else set(),
+        index_set={symbol} if asset == "index" else set(),
+    )
+    result = wl_api.watchlist_enriched(_make_request(repo), ext_columns=None)
+    assert [r["symbol"] for r in result["rows"]] == [pending, symbol]
+    row = result["rows"][1]
+    assert (row["close"], row["amount"], row["quote_ts"]) == (6.53, 30.0, ts)
+    assert row["asset_type"] == asset
+    assert quotes.height == 3
+
+
+def test_duplicate_prepared_rows_cannot_expand_watchlist(monkeypatch):
+    symbol = "600327.SH"
+    monkeypatch.setattr(wl_api.watchlist, "list_symbols", lambda: [{"symbol": symbol}])
+    repo = _FakeRepo(pl.DataFrame(), None)
+    repo.get_prepared_daily = lambda *args: pl.DataFrame({
+        "symbol": [symbol, symbol], "date": [date(2026, 11, 10), date(2026, 11, 11)],
+        "close": [6.0, 6.53],
+    })
+    row, = wl_api.watchlist_enriched(_make_request(repo), ext_columns=None)["rows"]
+    assert row["symbol"] == symbol and row["close"] == 6.53
+    assert row["prepared_daily"] is True

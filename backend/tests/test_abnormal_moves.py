@@ -11,6 +11,7 @@ from app.indicators.pipeline import (
     benchmark_momentum_today,
     load_benchmark_momentum,
 )
+from app.market_time import cn_today
 from app.services.abnormal_moves import (
     _bench_rt_pct,
     _hist_cache,
@@ -119,8 +120,11 @@ def test_benchmark_momentum_today_percent_not_treated_as_decimal(tmp_path) -> No
 
 
 def test_benchmark_momentum_today_excludes_today_rows(tmp_path) -> None:
-    # 指数监控盘写入的今日行不能当昨收 (否则实时涨跌被重复叠加)
-    today = date.today()
+    # 指数监控盘写入的今日行不能当昨收 (否则实时涨跌被重复叠加)。
+    # 脏行日期必须与实现同用 cn_today(): 实现按北京日切「今天」,
+    # 用宿主 date.today() 在 UTC 16-24 点窗口会与北京日错开一天,
+    # 脏行不再被排除 (CI runner 是 UTC, 每晚必红)。
+    today = cn_today()
     rows = [("000001.SH", d, 10.0 + i) for i, d in enumerate(_BENCH_DAYS)]
     rows.append(("000001.SH", today, 99.0))  # 今日脏行
     _write_index_daily(tmp_path, rows)
@@ -269,6 +273,42 @@ def test_build_overview_closeness_and_status() -> None:
     assert result["counts"]["triggered"] >= 1
 
 
+def test_build_overview_weekend_does_not_double_count_last_session(monkeypatch) -> None:
+    """休市日没有新的「今日涨跌」; 快照停在最近交易日, 其 change_pct 已在 deviate 内。
+
+    未修复代码只判断 cache_date >= date.today(): 周六/周日 (以及 UTC 主机上
+    北京已经跨日、本地还没跨日的窗口) 会把周五涨跌再叠加一遍, 接近度被放大。
+    """
+    from app.services import abnormal_moves as am
+
+    friday = date(2026, 9, 18)
+    saturday = date(2026, 9, 19)
+    monkeypatch.setattr(am, "cn_today", lambda: saturday, raising=False)
+    with _hist_cache_lock:
+        _hist_cache.clear()
+
+    class _FridayRepo(_FakeRepo):
+        def get_enriched_latest(self):
+            return self._df, friday
+
+    df = pl.DataFrame(
+        {
+            "symbol": ["600000.SH"],
+            "name": ["股A"],
+            "close": [10.0],
+            "change_pct": [0.05],
+            "deviate_3d": [0.19],
+            "deviate_10d": [None],
+            "deviate_30d": [None],
+        }
+    )
+    result = build_overview(_FridayRepo(df), _FakeQuotes(), min_closeness=0.5)
+    row = result["rows"][0]
+    assert abs(row["windows"]["3d"]["value"] - 0.19) < 1e-9, (
+        f"周末不应再叠加快照自身的 change_pct, 实际 {row['windows']['3d']['value']}"
+    )
+
+
 def test_build_overview_cache_date_today_no_double_count() -> None:
     """cache_date >= 今天时不再叠加实时涨跌 (避免重复计入)。"""
     with _hist_cache_lock:
@@ -276,7 +316,7 @@ def test_build_overview_cache_date_today_no_double_count() -> None:
 
     class _TodayRepo(_FakeRepo):
         def get_enriched_latest(self):
-            return self._df, date.today()
+            return self._df, cn_today()
 
     df = pl.DataFrame(
         {
@@ -301,7 +341,7 @@ def test_build_overview_negative_side_stricter_threshold() -> None:
 
     class _TodayRepo(_FakeRepo):
         def get_enriched_latest(self):
-            return self._df, date.today()
+            return self._df, cn_today()
 
     df = pl.DataFrame(
         {
@@ -526,8 +566,13 @@ def test_benchmark_momentum_today_gem_key(tmp_path) -> None:
     assert abs(sh["bench_mom3d"][0] - (15.0 / 13 - 1)) < 1e-9
 
 
-def test_build_overview_rt_overlay_uses_board_benchmark() -> None:
+def test_build_overview_rt_overlay_uses_board_benchmark(monkeypatch) -> None:
     """实时叠加按板块基准: 创业板股减创业板综指今日涨跌, 不再全市场混均值。"""
+    from app.services import abnormal_moves as am
+
+    # 钉在交易日, 否则周末守卫会关掉叠加, 本例测的是盘中叠加口径。
+    monkeypatch.setattr(am, "cn_today", lambda: date(2026, 9, 18), raising=False)
+    monkeypatch.setattr(am, "_is_closed_session", lambda: False, raising=False)
     with _hist_cache_lock:
         _hist_cache.clear()
 

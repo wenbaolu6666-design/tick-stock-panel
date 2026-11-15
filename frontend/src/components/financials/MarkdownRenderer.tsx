@@ -7,6 +7,7 @@ import { Fragment, type ReactNode } from 'react'
  * - 标题 # ## ### ####
  * - 加粗 **text**
  * - 行内代码 `code`
+ * - 链接 [text](https://example.com)，仅允许 HTTP/HTTPS，不执行原始 HTML
  * - 无序列表 - / *
  * - 有序列表 1.
  * - 表格 | a | b |
@@ -27,7 +28,7 @@ function renderInline(text: string, keyBase: string): ReactNode[] {
   // 涨跌语义 token: 带符号百分比/涨跌停词/方向词/金额数字。词表有意收窄 —
   // 只染有明确方向或语义的片段, 避免整段文字变成圣诞树; 无符号百分比
   // (换手率等)数值本身无方向, 不着色。语义色对齐 A 股口径(红涨绿跌)。
-  const re = /(\*\*([^*]+)\*\*)|(`([^`]+)`)|([+-]\d+(?:\.\d+)?%)|(涨停|跌停)|(上涨|下跌|高开|低开|走强|走弱)|(\d[\d,]*(?:\.\d+)?)(?=[元亿万])/g
+  const re = /(\*\*([^*]+)\*\*)|(`([^`]+)`)|([+-]\d+(?:\.\d+)?%)|(涨停|跌停)|(上涨|下跌|高开|低开|走强|走弱)|(\d[\d,]*(?:\.\d+)?)(?=[元亿万])|(\[([^\]\n]+)\]\(([^\s)]+)\))/g
   let last = 0
   let m: RegExpExecArray | null
   let i = 0
@@ -70,6 +71,17 @@ function renderInline(text: string, keyBase: string): ReactNode[] {
           {m[7]}
         </span>,
       )
+    } else if (m[9]) {
+      let safe = false
+      try {
+        safe = ['http:', 'https:'].includes(new URL(m[11]).protocol)
+      } catch { /* 非完整网址保留原文 */ }
+      nodes.push(safe ? (
+        <a key={`${keyBase}-a-${i}`} href={m[11]} target="_blank" rel="noopener noreferrer"
+          className="break-words text-accent underline underline-offset-2 hover:decoration-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">
+          {renderInline(m[10], `${keyBase}-a-${i}`)}
+        </a>
+      ) : <Fragment key={`${keyBase}-a-${i}`}>{m[9]}</Fragment>)
     } else {
       // 金额数字: 等宽(设计语言: 数字等宽); 单位留在 span 外
       nodes.push(
@@ -109,7 +121,7 @@ function parseTable(lines: string[], start: number): { rows: string[][]; consume
 
 // ===== 主渲染 =====
 
-export function MarkdownRenderer({ content }: { content: string }) {
+export function MarkdownRenderer({ content, compact = false }: { content: string; compact?: boolean }) {
   const lines = content.replace(/\r\n/g, '\n').split('\n')
   const blocks: ReactNode[] = []
   let i = 0
@@ -137,7 +149,7 @@ export function MarkdownRenderer({ content }: { content: string }) {
     if (hMatch) {
       const level = hMatch[1].length
       const text = hMatch[2]
-      const sizeCls = level === 1 ? 'text-base' : level === 2 ? 'text-sm' : 'text-xs'
+      const sizeCls = level === 1 ? 'text-[16px] leading-6' : level === 2 ? 'text-sm' : 'text-xs'
       const mtCls = level <= 2 ? 'mt-6' : 'mt-5'
       blocks.push(
         <div key={key++} className={`${sizeCls} ${mtCls} mb-3 font-semibold text-foreground flex items-center gap-1.5`}>
@@ -169,16 +181,24 @@ export function MarkdownRenderer({ content }: { content: string }) {
       if (table) {
         const [header, ...body] = table.rows
         const ncol = header.length
+        // 宽表(>4 列, 如筛选结果)与窄表(财务报告的 维度/判断 表)分开处理:
+        // 窄表 table-fixed + 末列加宽, 单元格可折行; 宽表列多而内容短,
+        // 挤压会把标的/代码折成多行(600127.S / H), 改为按内容取宽 + 单元格不折行 + 横向滚动。
+        const wide = ncol > 4
         blocks.push(
-          <div key={key++} className="my-5 overflow-hidden rounded-btn border border-border/30">
-            <table className="w-full text-xs border-collapse table-fixed">
-              <colgroup>
-                {/* 首列(维度)较窄;末列(判断/说明)最宽并允许折行 */}
-                <col className="w-auto" />
-                {Array.from({ length: ncol - 1 }).map((_, ci) => (
-                  <col key={ci} className={ci === ncol - 2 ? 'w-1/2' : 'w-auto'} />
-                ))}
-              </colgroup>
+          <div key={key++} className={`my-5 rounded-btn border border-border/30 ${wide ? 'overflow-x-auto' : 'overflow-hidden'}`}>
+            <table className={wide
+              ? 'min-w-full w-max text-xs border-collapse table-auto'
+              : 'w-full text-xs border-collapse table-fixed'}>
+              {!wide && (
+                <colgroup>
+                  {/* 首列(维度)较窄;末列(判断/说明)最宽并允许折行 */}
+                  <col className="w-auto" />
+                  {Array.from({ length: ncol - 1 }).map((_, ci) => (
+                    <col key={ci} className={ci === ncol - 2 ? 'w-1/2' : 'w-auto'} />
+                  ))}
+                </colgroup>
+              )}
               <thead>
                 <tr className="bg-elevated/50">
                   {header.map((cell, ci) => (
@@ -192,7 +212,7 @@ export function MarkdownRenderer({ content }: { content: string }) {
                 {body.map((row, ri) => (
                   <tr key={ri} className="border-b border-border/20 last:border-0 hover:bg-elevated/20">
                     {row.map((cell, ci) => (
-                      <td key={ci} className="px-2.5 py-1.5 text-foreground align-top break-words">
+                      <td key={ci} className={`px-2.5 py-1.5 text-foreground align-top ${wide ? 'whitespace-nowrap' : 'break-words'}`}>
                         {renderInline(cell, `td-${key}-${ri}-${ci}`)}
                       </td>
                     ))}
@@ -260,5 +280,5 @@ export function MarkdownRenderer({ content }: { content: string }) {
 
   // 注意:外层不加 space-y-*,否则会覆盖各块自己的 margin-top 导致间距失效。
   // 让各块的 my-* 自然叠加(margin collapse),间距更可控。
-  return <div>{blocks}</div>
+  return <div className={compact ? 'min-w-0 break-words [&>p]:my-2 [&>p]:text-xs [&>p]:text-secondary [&>ul]:my-2 [&>ol]:my-2 [&_li]:text-xs [&_li]:text-secondary [&>div]:my-2 [&>div]:text-sm [&>blockquote]:my-2 [&>hr]:my-3 [&>:first-child]:mt-0 [&>:last-child]:mb-0' : undefined}>{blocks}</div>
 }

@@ -44,7 +44,7 @@ AI 代理规则见其第 13 节),二者不互相替代。
   路径一律用 `chr(92)` 拼接,不要手写反斜杠转义。
 - 注册计划任务/写注册表的脚本同样要 BOM,否则中文路径乱码(任务 LastResult=0xFFFD0000)。
 - git:`origin` 只读上游;推送用 `personal` 并带代理:
-  `git -c http.proxy=http://127.0.0.1:7900 push personal main`。
+  `git -c http.proxy=http://127.0.0.1:7897 push personal main`。
 - Git Bash 调 Windows 命令开关用双斜杠:`schtasks //run //tn "TSP-AutoStart"`。
 
 ## 服务栈与自启动链

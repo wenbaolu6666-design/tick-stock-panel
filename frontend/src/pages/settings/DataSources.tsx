@@ -1,4 +1,4 @@
-import { useState } from 'react'
+﻿import { useState } from 'react'
 import { ExtensionSlot } from '@/extensions/ExtensionSlot'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -1094,6 +1094,8 @@ function PluginDetail({ plugin, isActive, matrixCaps, servingSet, refresh }: {
 /** TickFlow 详情: 介绍 + 能力档位表 + Key/可用功能左右两栏。
  *  检测档位集群 (档位徽章 + ? 说明 + 重新检测 + 可用功能悬停) 挂在 API Key 标题行右侧。 */
 function TickFlowDetail({ active, matrix }: { active: boolean; matrix?: CapabilityMatrix }) {
+  // TickFlow 默认源卡隐藏(用户要求): 全部能力已由插件覆盖
+  if (true) return null;
   const caps = matrix?.capabilities ?? []
   const tier = matrix?.tickflow_tier
   const { data: tfCaps } = useCapabilities()

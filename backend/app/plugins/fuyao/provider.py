@@ -5,8 +5,8 @@
 
 实现数据集:
   - realtime     A 股全市场快照 (分页)
-  - daily        A 股原始日K; 少量标的优先批量,全市场走 10d/10 年 dump,
-                 dump 缺口由批量接口补齐,漏标的或请求失败回退单标的接口
+  - daily        A 股日K, 原始价; 近端窗口走 daily-k-10d 全市场 dump(1 次请求),
+                 深窗口走单标的 historical 接口(≤10 年/次自动分片)
   - adj_factor   A 股除权因子; adjustment-factors 事件 dump + 自家原始日K前收盘,
                  按交易所公式推导单事件比值, 涨跌停自检
   - financial    财务五表(股本除外): 三表多期序列 + 指标单期, 字段映射为 TickFlow
@@ -40,21 +40,15 @@ from pathlib import Path
 import polars as pl
 import pyarrow.parquet as pq
 
-from app.data_providers.base import ProviderRequestError
 from app.data_providers.normalizer import DAILY_COLS, normalize_daily
 from app.indicators.pipeline import filter_halt_days
 from app.plugins.fuyao import client as fuyao_client
-from app.plugins.fuyao.client import (
-    HISTORICAL_BATCH_LIMIT,
-    FuyaoClient,
-    FuyaoError,
-    FuyaoUnknownSymbolError,
-)
+from app.plugins.fuyao.client import FuyaoClient, FuyaoError
 
 logger = logging.getLogger(__name__)
 
 # 只声明真实提供的数据集; 其余数据集 provider_has_dataset 返回 False → 回退 tickflow
-_DATASETS = ("realtime", "daily", "adj_factor", "financial")
+_DATASETS = ("realtime", "daily", "adj_factor", "financial", "fund")
 
 API_KEY_ENV = "FUYAO_API_KEY"
 SECRETS_FIELD = "fuyao_api_key"  # UI 配置的 Key 存 secrets.json, 优先级高于 .env
@@ -78,7 +72,6 @@ _RECENT_DUMP_DAYS = 12  # 窗口跨度 ≤ 此天数时优先走 10d dump(覆盖
 _PREV_CLOSE_BACKDAYS = 30  # 推导因子时向前找"除权日前收盘"的回看天数(容忍长期停牌)
 _DAILY_DUMP_BATCH_ROWS = 100_000
 _HIST_SYMBOL_BATCH = 50
-_HIST_SMALL_SYMBOL_LIMIT = HISTORICAL_BATCH_LIMIT
 _DAILY_DUMP_COLUMNS = [
     "thscode", "adjusted", "date_ms", "open_price", "high_price", "low_price",
     "close_price", "volume", "turnover",
@@ -194,7 +187,7 @@ def _ref_price(
 def _price_limit(symbol: str) -> float:
     """按代码前缀给涨跌停幅度(自检容差用): 创业板/科创板 20%, 北交所 30%, 主板 10%。"""
     code = symbol.split(".")[0]
-    if code.startswith(("300", "301", "302", "688", "689")):
+    if code.startswith(("300", "301", "688", "689")):
         return 0.20
     if code.startswith(("8", "4", "92")):
         return 0.30
@@ -365,39 +358,13 @@ class FuyaoProvider:
         self._dump_memo[dump_kind] = df
         return df
 
-    def _daily10_for_window(self, start_d: date, end_d: date) -> pl.DataFrame:
-        """近端缓存覆盖不足时检查新 release, 避免常驻进程永久降级逐票拉取。"""
-        kind = _DAILY10_DUMP_KIND
-        cached = kind in self._dump_memo or kind in self._dump_path_memo
-        dump = self._ensure_dump(kind, "daily_k_10d")
-        if cached and not _dump_covers(dump, start_d, end_d):
-            # 帧和路径必须一起失效, 否则仍会读回旧 release 的磁盘文件。
-            self._dump_memo.pop(kind, None)
-            self._dump_path_memo.pop(kind, None)
-            logger.info("扶摇近端日K缓存未覆盖 [%s ~ %s], 检查最新 dump", start_d, end_d)
-            dump = self._ensure_dump(kind, "daily_k_10d")
-        return dump
-
-    def _ensure_daily_big_dump(self, start_d: date | None) -> Path | None:
-        """10 年全量日K dump(约 172MB)。要求覆盖窗口起点时校验; 末端缺口由 10d dump 补。
-
-        start_d=None 表示不校验覆盖(配价场景): 只要拿到 dump 本身即可,
-        个别覆盖不到的标的由 get_adj_factors 逐只回退 — 避免"全市场最早的
-        一个远古事件早于 dump 起点"就把整轮配价打回逐标的接口。
+    def _ensure_daily_big_dump(self, start_d: date) -> Path | None:
+        """10 年全量日K dump(约 172MB)。只要求覆盖窗口起点; 末端缺口由 10d dump 补。
 
         已有缓存覆盖起点就直接复用, 不追新 release(避免深窗口高频触发时日日重下
         172MB — 旧 release 的中段历史不会变, 尾部新鲜度交给 1MB 的 10d dump)。
         """
-        cached = sorted(_cache_dir().glob("daily_k__*.parquet"), reverse=True)
-        if start_d is None:
-            if cached:
-                return cached[0]
-            try:
-                return self._ensure_dump_path(_DAILY_DUMP_KIND, "daily_k")
-            except FuyaoError as e:
-                logger.warning("扶摇 10 年 dump 不可用, 回退单标的接口: %s", e)
-                return None
-        for f in cached:
+        for f in sorted(_cache_dir().glob("daily_k__*.parquet"), reverse=True):
             try:
                 dmin, _ = _dump_date_range(f)
             except Exception:  # 缓存损坏不致命, 换下一个/重拉
@@ -477,12 +444,12 @@ class FuyaoProvider:
     ) -> pl.DataFrame:
         """A 股日K → 内部契约。原始价(adjust=none 锁定)、volume 股→手(floor /100)。
 
-        - ≤10 只: 优先股票批量历史接口,每次最多10只,避免小查询下载全市场整包;
-        - 更大范围的近端窗口(跨度 ≤12 天): daily-k-10d dump(约 1MB);
-        - 更大范围的深窗口: daily-k 10 年全量 dump(约 172MB, 缓存覆盖起点即复用, 不追新 release),
+        取数三档(逐级降级, 全部失败才空手而归):
+        - 近端窗口(跨度 ≤12 天): daily-k-10d dump(约 1MB), 1 次请求覆盖全部标的;
+        - 深窗口: daily-k 10 年全量 dump(约 172MB, 缓存覆盖起点即复用, 不追新 release),
           末端缺口由 10d dump 补尾 — 全市场深回填从"逐票 34 分钟"降为"一次下载+秒级筛选";
-        - dump 缺口或不可用时走批量接口;漏标的或批量失败回退单标的 historical,
-          10 年自动分片、节流和进度回调保留;请求均失败时明确报错,不发布部分结果。
+        - 兜底: 单标的 historical 接口(窗口早于 dump 覆盖 / dump 不可用; 10 年自动分片,
+          逐标的节流 + 进度回调)。
         """
         chunks = [
             df
@@ -508,16 +475,14 @@ class FuyaoProvider:
         """分批产出日K,供历史同步逐批落盘,避免全市场结果累积在内存。"""
         if not symbols or asset_type != "stock":
             return
-        symbols = list(dict.fromkeys(symbols))
         end_dt = end_time or datetime.now()
         start_dt = start_time or (end_dt - timedelta(days=365))
         start_d, end_d = start_dt.date(), end_dt.date()
         symset = set(symbols)
-        prefer_api = len(symbols) <= _HIST_SMALL_SYMBOL_LIMIT
 
-        if not prefer_api and (end_d - start_d).days <= _RECENT_DUMP_DAYS:
+        if (end_d - start_d).days <= _RECENT_DUMP_DAYS:
             try:
-                dump = self._daily10_for_window(start_d, end_d)
+                dump = self._ensure_dump(_DAILY10_DUMP_KIND, "daily_k_10d")
                 if _dump_covers(dump, start_d, end_d):
                     df = self._daily_from_dump(dump, symset, start_d, end_d)
                     if on_chunk_done:
@@ -528,7 +493,7 @@ class FuyaoProvider:
             except FuyaoError as e:
                 logger.warning("扶摇 10d dump 不可用: %s", e)
 
-        dump_info = None if prefer_api else self._daily_dump_info()
+        dump_info = self._daily_dump_info()
         sources: list[tuple[str, date, date]] = []
         if dump_info:
             _, dump_min, dump_max = dump_info
@@ -540,7 +505,7 @@ class FuyaoProvider:
             tail_start = max(start_d, dump_max + timedelta(days=1))
             if tail_start <= end_d and not _tail_ok(end_d, dump_max):
                 try:
-                    ten = self._daily10_for_window(tail_start, end_d)
+                    ten = self._ensure_dump(_DAILY10_DUMP_KIND, "daily_k_10d")
                     ten_dates = pl.from_epoch(
                         ten["date_ms"].cast(pl.Int64) + _SH_MS, time_unit="ms"
                     ).dt.date()
@@ -596,7 +561,13 @@ class FuyaoProvider:
                     for i in range(0, len(symbols), _HIST_SYMBOL_BATCH)
                 ]
                 for batch in batches:
-                    rows = self._historical_batch_rows(batch, source_start, source_end)
+                    rows: list[dict] = []
+                    for symbol in batch:
+                        rows.extend(_kline_rows(
+                            symbol,
+                            self._historical_bars(symbol, source_start, source_end),
+                        ))
+                        time.sleep(_HIST_INTERVAL_S)
                     df = normalize_daily(rows, source=self.name)
                     done += 1
                     if on_chunk_done:
@@ -688,43 +659,6 @@ class FuyaoProvider:
         cols = [c for c in DAILY_COLS if c in out.columns]
         return out.select(cols).sort(["symbol", "date"]) if not out.is_empty() else out.select(cols)
 
-    def _historical_batch_rows(self, symbols: list[str], start_d: date, end_d: date) -> list[dict]:
-        """每组至多10只、每片至多10年;只为缺组回退,合法空组不重复拉取。"""
-        client = self._get_client()
-        out: list[dict] = []
-        unknown_symbols: set[str] = set()
-        start, end = _ms_of_date(start_d), _ms_of_date(end_d)
-        while start <= end:
-            chunk_end = min(end, start + _HIST_MAX_SPAN_MS - 1)
-            for offset in range(0, len(symbols), HISTORICAL_BATCH_LIMIT):
-                batch = [s for s in symbols[offset:offset + HISTORICAL_BATCH_LIMIT] if s not in unknown_symbols]
-                if not batch:
-                    continue
-                try:
-                    grouped = client.historical_kline_batch(batch, start, chunk_end)
-                except FuyaoError as err:
-                    logger.warning("扶摇批量日K不可用,回退单标的接口 (%d 只): %s", len(batch), err)
-                    grouped = {}
-                time.sleep(_HIST_INTERVAL_S)
-                for symbol in batch:
-                    if symbol in grouped:
-                        bars = grouped[symbol]
-                    else:
-                        try:
-                            bars = client.historical_kline(symbol, start, chunk_end, adjust="none")
-                        except FuyaoError as err:
-                            if isinstance(err, FuyaoUnknownSymbolError) and err.symbol == symbol:
-                                unknown_symbols.add(symbol)
-                                logger.warning("扶摇历史日K未覆盖 %s,本轮跳过并保留本地历史", symbol)
-                                time.sleep(_HIST_INTERVAL_S)
-                                continue
-                            # 同步层会丢弃暂存帧,避免一部分标的成功后误报整轮完成。
-                            raise ProviderRequestError(f"扶摇日K补查失败 {symbol}: {err}") from err
-                        time.sleep(_HIST_INTERVAL_S)
-                    out.extend(_kline_rows(symbol, bars))
-            start = chunk_end + 1
-        return out
-
     def _historical_bars(self, symbol: str, start_d: date, end_d: date) -> list[dict]:
         """按 ≤10 年窗口分片拉取单标的原始日K。中途失败软返回已得行, 不抛出。"""
         out: list[dict] = []
@@ -751,25 +685,14 @@ class FuyaoProvider:
         asset_type: str = "stock",
         on_chunk_done: Callable[[int, int], None] | None = None,
     ) -> pl.DataFrame:
-        """A 股除权因子 → 内部契约(symbol/trade_date/ex_factor, 单事件比值非累积)
-        + 事件明细列(dividend/bonus/allot/allot_price/prev_close, 可空):
-        供等差显示投影(Σ未来每股分红)与官方金额全精度因子链重建使用,
-        明细取自事件 dump 原始成分, 不再在推导后丢弃。
+        """A 股除权因子 → 内部契约(symbol/trade_date/ex_factor, 单事件比值非累积)。
 
         数据链: adjustment-factors 全量事件 dump → 清洗(时区 +8h / 滤全零 / 同日成分合并)
         → 前收盘价从本地日K dump 一次取齐(缺价标的回退单标的接口) → 交易所公式推导
         → 涨跌停自检剔除异常。
         未来已公告事件无前收盘, 留给滚动增量窗口(15 天)自然补上。
         """
-        schema = {
-            "symbol": pl.String, "trade_date": pl.Date, "ex_factor": pl.Float64,
-            "dividend": pl.Float64, "bonus": pl.Float64, "allot": pl.Float64,
-            "allot_price": pl.Float64, "prev_close": pl.Float64,
-        }
-
-        def _f(x) -> float | None:
-            return None if x is None else float(x)
-
+        schema = {"symbol": pl.String, "trade_date": pl.Date, "ex_factor": pl.Float64}
         if not symbols or asset_type != "stock":
             return pl.DataFrame(schema=schema)
         try:
@@ -837,12 +760,7 @@ class FuyaoProvider:
                             ret * 100,
                         )
                         continue
-                out_rows.append({
-                    "symbol": sym, "trade_date": exd, "ex_factor": factor,
-                    "dividend": _f(ev["dividend"]), "bonus": _f(ev["bonus"]),
-                    "allot": _f(ev["allot"]), "allot_price": _f(ev["allot_price"]),
-                    "prev_close": _f(p),
-                })
+                out_rows.append({"symbol": sym, "trade_date": exd, "ex_factor": factor})
             if on_chunk_done:
                 on_chunk_done(i + 1, len(syms))
         if closes_by_sym is not None:
@@ -1016,9 +934,7 @@ class FuyaoProvider:
                     if src not in field_map and src not in row and isinstance(value, (int, float)):
                         row[src] = value
                 rows_out.append(row)
-        # 稀疏列(如仅银行有值的 financial_expense)前 100 行可能全空, 默认采样会
-        # 推断成 Null 列, 后续数值 append 失败 → 全量扫描推断
-        return pl.DataFrame(rows_out, infer_schema_length=None) if rows_out else pl.DataFrame()
+        return pl.DataFrame(rows_out) if rows_out else pl.DataFrame()
 
     def _financial_metrics(self, symbols: list[str]) -> pl.DataFrame:
         client = self._get_client()
@@ -1063,10 +979,7 @@ class FuyaoProvider:
                         if value is not None:
                             row[self._METRICS_FIELD_MAP.get(index_id, index_id)] = value
             rows_out.append(row)
-        # 稀疏列(仅个别行业有值的指标)前 100 行可能不存在或全空, 默认采样会
-        # 静默丢列 / 推断成 Null 后 append 失败 → 全量扫描推断 (与 _financial_
-        # statements 同修, #458)
-        return pl.DataFrame(rows_out, infer_schema_length=None) if rows_out else pl.DataFrame()
+        return pl.DataFrame(rows_out) if rows_out else pl.DataFrame()
 
     def trading_days(self) -> set:
         """近一年交易日集合 (供交易日探针)。失败抛 FuyaoError, 由探针兜为未知。"""
@@ -1142,12 +1055,12 @@ class FuyaoProvider:
 
         每标的开窗 [first_ex-30d, last_ex](与单标的接口同窗): 10 年大 dump 为
         主体, 10d dump 叠加补末端新鲜度(除权日当天的自检需要 ex 日收盘)。
-        返回 symbol → {date: close}; 大 dump 不可用/读盘失败 → None 整轮回退。
-        覆盖不到首个事件的个别标的不在此 dict 中(或首价晚于 first_ex),
-        由 get_adj_factors 逐只回退单标的接口 — 按需, 不全有或全无。
+        返回 symbol → {date: close}; 大 dump 不可用/窗口早于其覆盖/读盘失败
+        → None, 由调用方整轮回退单标的接口。
         """
         try:
-            path = self._ensure_daily_big_dump(None)
+            lo = bounds["first_ex"].min() - timedelta(days=_PREV_CLOSE_BACKDAYS)
+            path = self._ensure_daily_big_dump(lo)
             if path is None:
                 return None
             sources = [self._closes_scan(pl.scan_parquet(path))]
@@ -1210,7 +1123,7 @@ class FuyaoProvider:
                     df = self.get_adj_factors(
                         syms, datetime.now() - timedelta(days=365), datetime.now()
                     )
-            except (FuyaoError, ProviderRequestError) as e:
+            except FuyaoError as e:
                 return {"provider": self.name, "dataset": dataset, "rows": 0, "error": str(e)}
             head = df.head(5).to_dicts()
             for row in head:  # date/datetime → ISO 字符串, 保证 JSON 可序列化
@@ -1258,3 +1171,34 @@ class FuyaoProvider:
             "columns": list(head[0].keys()) if head else [],
             "preview": head,
         }
+
+    # ---- 基金 (fund) ----
+    # days → 扶摇 range 档位 (week/month/tmonth/hyear/year/twoyear/tyear/fyear)
+    _FUND_RANGES = (
+        (7, "week"), (31, "month"), (92, "tmonth"), (183, "hyear"),
+        (366, "year"), (730, "twoyear"), (1095, "tyear"), (1096, "fyear"),
+    )
+
+    def get_fund_nav(self, symbol: str, days: int = 90) -> pl.DataFrame:
+        """基金单位净值序列 (fund dataset, GET /api/fund/performance/nav)。
+
+        symbol 为带市场后缀的同花顺基金代码: 510300.SH / 161725.SZ / 025480.OF;
+        不带后缀时默认按场外 .OF 处理。返回列: date(nav_date), unit_nav。
+        后续消费端接入 (基金页/监控) 再扩展持仓/经理/分红等接口。
+        """
+        code = symbol.strip()
+        if "." not in code:
+            code = f"{code}.OF"
+        rng = "fyear"
+        for limit, name in self._FUND_RANGES:
+            if days <= limit:
+                rng = name
+                break
+        items = self._get_client().fund_performance_nav(code, range_=rng)
+        rows = [
+            {"date": date.fromtimestamp(item["nav_date"] / 1000), "unit_nav": item.get("unit_nav")}
+            for item in items
+            if item.get("nav_date") is not None
+        ]
+        return pl.DataFrame(rows)
+

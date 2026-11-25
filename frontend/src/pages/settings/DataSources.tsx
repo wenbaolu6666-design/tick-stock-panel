@@ -577,7 +577,7 @@ export function SettingsDataSourcesPanel({ highlight }: { highlight?: string } =
   const sources = useQuery({ queryKey: QK.dataSources, queryFn: api.dataSources })
   const matrix = useQuery({ queryKey: QK.capabilityMatrix, queryFn: api.capabilityMatrix })
   const tdxStatus = useQuery({ queryKey: ['tdx-status'], queryFn: api.tdxStatus, refetchInterval: (q: any) => (q.state.data?.tq_online ? 30000 : 5000) })
-  const launchTdx = useMutation({ mutationFn: api.launchTdx, onSuccess: (d) => { toast(d.message || '已启动通达信', 'success'); qc.invalidateQueries({ queryKey: ['tdx-status'] }); setTimeout(() => qc.invalidateQueries({ queryKey: ['tdx-status'] }), 5000) }, onError: (e: Error) => toast(`启用通达信失败: ${e.message}`, 'error') })
+  const launchTdx = useMutation({ mutationFn: api.launchTdx, onSuccess: (d) => { toast(d.message || '已启动通达信', 'success'); qc.invalidateQueries({ queryKey: ['tdx-status'] }); qc.invalidateQueries({ queryKey: QK.dataSources }); qc.invalidateQueries({ queryKey: QK.capabilityMatrix }); qc.invalidateQueries({ queryKey: QK.capabilities }); setTimeout(() => { qc.invalidateQueries({ queryKey: ['tdx-status'] }); qc.invalidateQueries({ queryKey: QK.dataSources }); qc.invalidateQueries({ queryKey: QK.capabilityMatrix }); qc.invalidateQueries({ queryKey: QK.capabilities }) }, 5000) }, onError: (e: Error) => toast(`启用通达信失败: ${e.message}`, 'error') })
   const [selected, setSelected] = useState<string>('tickflow') // 当前在下方配置的源 name
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
 

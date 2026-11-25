@@ -2578,8 +2578,14 @@ def get_tdx_status() -> dict:
 def launch_tdx() -> dict:
     """User-initiated TDX launch from the settings UI."""
     from app.plugins.tdx_quant.provider import launch_tdx_client
-    ok, message = launch_tdx_client(wait_seconds=0.0)
+    ok, message = launch_tdx_client(wait_seconds=20.0)
     if not ok:
         raise HTTPException(status_code=409, detail=message)
+    # TQ 上线后立即重新探测插件, 让能力矩阵无需用户手动“重新加载”。
+    try:
+        from app.data_providers.custom import loader as custom_loader
+        custom_loader.load_all()
+    except Exception:  # noqa: BLE001
+        pass
     return {"ok": True, "message": message}
 

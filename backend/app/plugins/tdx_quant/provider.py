@@ -113,15 +113,13 @@ _ENSURE_ATTEMPTED = False
 
 
 def _tq_alive() -> bool:
+    global _gateway_down_until
+    import socket
     try:
-        _call("get_market_data", {
-            "stock_list": ["000001.SZ"],
-            "count": 1,
-            "dividend_type": "none",
-            "period": "1d",
-        }, timeout=2.0)
-        return True
-    except Exception:  # noqa: BLE001
+        with socket.create_connection(("127.0.0.1", 17709), timeout=1.0):
+            _gateway_down_until = 0.0
+            return True
+    except OSError:
         return False
 
 
@@ -223,30 +221,32 @@ def _settle_tdx_windows(pid: int, timeout_seconds: float = 300.0) -> None:
         logger.info("tdx_quant: TdxW 主窗口已最小化（弹窗未全部关闭）")
 
 def _kick_login_automation() -> None:
-    """后台启动登录自动化 v7（autostart-tdx-login.ps1）：自动点登录/关风险揭示
-    弹窗/关公告，网关上线后由 _settle_tdx_windows 最小化主窗。
-
-    与开机自启链 (autostart-all.ps1 step1b) 共用同一脚本与互斥锁，重复启动
-    自动让位；前台拉起路径原先不带它，登录窗会停在前台等人工——此处补齐，
-    使后端自愈拉起与开机自启行为一致。"""
+    """Launch login automation v7 using absolute shell paths."""
     candidates = []
     if getattr(sys, "frozen", False):
         candidates.append(Path(sys.executable).resolve().parent / "autostart-tdx-login.ps1")
     candidates.append(Path(__file__).resolve().parents[4] / "autostart-tdx-login.ps1")
     ps1 = next((p for p in candidates if p.exists()), None)
     if ps1 is None:
+        logger.warning("tdx_quant: login automation not found: %s", candidates)
         return
-    for shell in ("pwsh", "powershell"):
+    shells = [
+        "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+        "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+    ]
+    for shell in shells:
+        if not Path(shell).exists():
+            continue
         try:
             subprocess.Popen(
                 [shell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(ps1)],
-                cwd=str(ps1.parent), creationflags=0x00000008, close_fds=True,
+                cwd=str(ps1.parent), creationflags=0x08000000, close_fds=True,
             )
+            logger.info("tdx_quant: login automation launched via %s", shell)
             return
-        except FileNotFoundError:
-            continue
-        except Exception:  # noqa: BLE001
-            return
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("tdx_quant: login automation failed via %s: %s", shell, exc)
+    logger.error("tdx_quant: login automation could not be launched")
 
 
 def ensure_tq_running(wait_seconds: float = 0.0) -> bool:
@@ -262,7 +262,15 @@ def launch_tdx_client(wait_seconds: float = 0.0) -> tuple[bool, str]:
     if _tq_alive():
         return True, "TQ 网关已在线"
     if _tdx_process_running():
-        return False, "TdxW 已运行但 TQ 网关未就绪，请检查登录状态"
+        # TdxW 已登录但 TQ 未起：补触发一次登录自动化（处理风险揭示/公告窗），
+        # 实测该动作可在数秒内拉起 17709，不能直接报错让用户手动处理。
+        _kick_login_automation()
+        deadline = time.time() + max(wait_seconds, 15.0)
+        while time.time() < deadline:
+            time.sleep(2)
+            if _tq_alive():
+                return True, "TQ 网关已上线"
+        return True, "已触发登录自动化，TQ 正在初始化，请稍后刷新状态"
     exe = _find_tdx_exe()
     if exe is None:
         return False, "未找到通达信客户端 TdxW.exe"

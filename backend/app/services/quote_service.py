@@ -1,4 +1,4 @@
-"""全局实时行情服务。
+﻿"""全局实时行情服务。
 
 集中管理全市场行情拉取 + enriched 缓存，供盘中策略、自选等所有模块复用。
 
@@ -758,6 +758,7 @@ class QuoteService:
         # 线程身份检查: stop() 清标志 → 释放锁 → join 前, 另一线程 start() 可能把
         # _running 置回 True, 老线程只看共享标志会永不退出 (join 超时 + 双轮询)。
         # _thread 指向新线程/None 时, 老循环在下一轮检查点自行退出。
+        final_fail_streak = 0
         while self._running and self._enabled and self._thread is threading.current_thread():
             try:
                 # 管道/数据修正运行期间临时暂停取数, 防止与管道写同一批 parquet 竞态。
@@ -774,6 +775,7 @@ class QuoteService:
                             key = self._final_sync_key(phase)
                             label = "午休" if phase == "morning_final" else "收盘"
                             if key and ok and self._last_final_confirmed:
+                                final_fail_streak = 0
                                 self._final_sync_done.add(key)
                                 self._final_sync_failed.pop(key, None)
                                 logger.info("%s 最终行情同步完成 (快照时间戳已达边界), 进入休盘态", label)
@@ -795,14 +797,23 @@ class QuoteService:
                                     "fetch_failed" if not ok else "unconfirmed_snapshot"
                                 )
                                 if not ok:
-                                    logger.warning("%s 最终行情同步失败, 将继续重试", label)
+                                    final_fail_streak += 1
+                                    logger.warning(
+                                        "%s 最终行情同步失败 (连续第 %d 次), 退避后重试",
+                                        label, final_fail_streak,
+                                    )
                     else:
                         logger.debug("非轮询阶段(%s), 跳过行情轮询", phase)
             except Exception as e:  # noqa: BLE001
                 logger.warning("行情轮询异常: %s", e)
 
+            # 定版失败退避: 连续失败时 1x->2x->4x->8x->16x, 上限 10 分钟,
+            # 避免数据源已失联时仍按秒级间隔无限重试。
+            wait_s = self._interval
+            if final_fail_streak > 0:
+                wait_s = min(self._interval * (2 ** min(final_fail_streak, 4)), 600.0)
             waited = 0.0
-            while self._running and self._enabled and waited < self._interval:
+            while self._running and self._enabled and waited < wait_s:
                 time.sleep(0.5)
                 waited += 0.5
 

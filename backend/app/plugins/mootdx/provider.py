@@ -112,8 +112,33 @@ def _records_from_frame(df: Any) -> list[dict]:
     return [dict(r) for r in records]
 
 
+_DISCOVERY_COOLDOWN_S = 300.0
+_discovery_failed_until = 0.0
+_last_discovery_err = ""
+
+
+def _safe_close(client) -> None:
+    """Best-effort close a half-initialized mootdx client to avoid socket leaks."""
+    for name in ("close", "disconnect", "exit"):
+        fn = getattr(client, name, None)
+        if callable(fn):
+            try:
+                fn()
+            except Exception:  # noqa: BLE001
+                pass
+            return
+
+
 def _new_client():
-    """Create a validated TDX client (imports mootdx lazily)."""
+    """Create a validated TDX client (imports mootdx lazily).
+
+    Failed candidates are closed before continuing, and a failed discovery
+    trip is cached for 5 minutes so pollers do not re-dial every cycle.
+    """
+    global _discovery_failed_until, _last_discovery_err
+    if time.monotonic() < _discovery_failed_until:
+        raise RuntimeError(f"no reachable TDX server (cooldown): {_last_discovery_err}")
+
     from mootdx.quotes import Quotes
 
     def probe(ip, port, timeout=2.0):
@@ -134,22 +159,32 @@ def _new_client():
     for ip, port in _TDX_SERVERS:
         if not probe(ip, port):
             continue
+        client = None
         try:
             client = Quotes.factory(market="std", server=(ip, port))
             if validate(client):
                 return client
+            _safe_close(client)
         except Exception as e:  # noqa: BLE001
             last_err = e
+            if client is not None:
+                _safe_close(client)
             continue
     # fall back to mootdx's own bestip discovery (may require config)
     for kwargs in ({"bestip": True}, {}):
+        client = None
         try:
             client = Quotes.factory(market="std", **kwargs)
             if validate(client):
                 return client
+            _safe_close(client)
         except Exception as e:  # noqa: BLE001
             last_err = e
+            if client is not None:
+                _safe_close(client)
             continue
+    _last_discovery_err = str(last_err)
+    _discovery_failed_until = time.monotonic() + _DISCOVERY_COOLDOWN_S
     raise RuntimeError(f"no reachable TDX server: {last_err}")
 
 

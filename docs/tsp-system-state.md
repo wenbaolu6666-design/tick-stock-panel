@@ -2,6 +2,15 @@
 
 > 维护约定:每次改动自启动链/数据源栈后更新本文件。
 > 最后更新:2026-09-28(重装后迁移)
+> **2026-11-25 运维模式变更**: 计划任务 `TSP-AutoStart` 已 **停用**(Status=Disabled), 不再开机自启。
+> 改为按需启动管理器:
+>   - `TSP-Launcher.cmd status|start|start-all|stop|restart|open`
+>   - `TSP-Manager.ps1 -Action <同上> [-IncludeTdx]`
+>   - `start` = 后端 3018 + 前端 3011(不含通达信); `start-all` = 先拉 tdxw 等 TQ 17709 再起前后端;
+>     `stop -IncludeTdx` 连同通达信一起停。
+> 同时修复无效重试/资源泄漏: tdx_quant 增加 5 分钟熔断(网关不可达时批量循环立即中止, 不再逐标的
+> 建连重试); mootdx 失败 client 关闭 + 5 分钟探测冷却; quote_service 定版失败指数退避(上限 10 分钟)。
+
 > **2026-09-28 重装后迁移**:Windows 重装,项目根 E:\WenPaul\Documents\量化炒股 → D:\WenPaul\Documents\量化炒股;通达信数据目录 E:\tdx → D:\new_tdx_hd_test(V7.80 快照,vipdoc 数据新鲜至 09-25);代理 7897 → Clash Verge/mihomo 127.0.0.1:7897(实测无代理亦可直连推送 personal)。
 
 ## 通达信自启动链(当前 v7 + autostart-all v3 全静默)

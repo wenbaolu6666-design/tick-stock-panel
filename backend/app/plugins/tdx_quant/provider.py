@@ -1,4 +1,4 @@
-"""TdxQuant (official 通达信量化平台) built-in plugin via local HTTP 17709.
+﻿"""TdxQuant (official 通达信量化平台) built-in plugin via local HTTP 17709.
 
 Requires a running 通达信金融终端/量化模拟 with TQ enabled.
 P0: financial (income/balance_sheet/cash_flow/metrics/shares) via get_financial_data + get_gb_info
@@ -22,6 +22,13 @@ logger = logging.getLogger(__name__)
 
 _DATASETS = ("daily", "minute", "full_minute", "financial", "depth5", "valuation", "kzz", "ipo", "adj_factor")
 _URL = "http://127.0.0.1:17709/"
+
+class TdxGatewayDown(RuntimeError):
+    """TQ 网关不可达 — 熔断; 批量循环应立即中止, 不应逐标的重复建连重试。"""
+
+
+_GATEWAY_COOLDOWN_S = 300.0
+_gateway_down_until = 0.0
 _MINUTE_CANONICAL = ["symbol", "datetime", "open", "high", "low", "close", "volume", "amount"]
 
 # ---------------------------------------------------------------------------
@@ -315,9 +322,16 @@ def availability() -> tuple[bool, str]:
     return False, "未检测到通达信客户端，已尝试自动拉起未成功，请手动启动通达信后重载"
 
 def _call(method: str, params: dict, timeout: float = 30.0) -> dict:
+    global _gateway_down_until
+    if time.monotonic() < _gateway_down_until:
+        raise TdxGatewayDown("TQ 网关不可达 (熔断冷却中)")
     payload = {"id": 1, "method": method, "params": params}
-    r = httpx.post(_URL, json=payload, timeout=timeout)
-    r.raise_for_status()
+    try:
+        r = httpx.post(_URL, json=payload, timeout=timeout)
+        r.raise_for_status()
+    except (httpx.ConnectError, httpx.ConnectTimeout, httpx.RemoteProtocolError) as exc:
+        _gateway_down_until = time.monotonic() + _GATEWAY_COOLDOWN_S
+        raise TdxGatewayDown(f"TQ 网关不可达: {exc}") from exc
     data = r.json()
     result = data.get("result") or {}
     if str(result.get("ErrorId", "0")) != "0":
@@ -373,6 +387,10 @@ class TdxQuantProvider:
                     df = df.filter(pl.col("date") >= start_time.date())
                 if end_time:
                     df = df.filter(pl.col("date") <= end_time.date())
+            except TdxGatewayDown as e:
+                logger.warning("tdx_quant daily 中止: %s", e)
+                df = pl.DataFrame()
+                break
             except Exception as e:  # noqa: BLE001
                 logger.warning("tdx_quant daily %s failed: %s", symbol, e)
                 df = pl.DataFrame()
@@ -411,6 +429,10 @@ class TdxQuantProvider:
                     df = df.filter(pl.col("datetime") >= start_time)
                 if end_time:
                     df = df.filter(pl.col("datetime") <= end_time)
+            except TdxGatewayDown as e:
+                logger.warning("tdx_quant minute 中止: %s", e)
+                df = pl.DataFrame()
+                break
             except Exception as e:  # noqa: BLE001
                 logger.warning("tdx_quant minute %s failed: %s", symbol, e)
                 df = pl.DataFrame()
@@ -440,6 +462,9 @@ class TdxQuantProvider:
                 if not df.is_empty():
                     latest = df["datetime"].max()
                     df = df.filter(pl.col("datetime").dt.date() == latest.date())
+            except TdxGatewayDown as e:
+                logger.warning("tdx_quant intraday 中止: %s", e)
+                break
             except Exception as e:  # noqa: BLE001
                 logger.warning("tdx_quant intraday %s failed: %s", symbol, e)
                 df = pl.DataFrame()
@@ -646,6 +671,9 @@ class TdxQuantProvider:
                             "ex_factor": prev_ff / ff,
                         })
                     prev_ff = ff
+            except TdxGatewayDown as e:
+                logger.warning("tdx_quant adj_factor 中止: %s", e)
+                break
             except Exception as e:  # noqa: BLE001
                 logger.warning("tdx_quant adj_factor %s failed: %s", symbol, e)
             if on_chunk_done:
@@ -691,6 +719,9 @@ class TdxQuantProvider:
                     "change_pct": (last - prev) / prev,
                     "timestamp": int(time.time() * 1000),
                 })
+            except TdxGatewayDown as e:
+                logger.warning("tdx_quant realtime 中止: %s", e)
+                break
             except Exception as e:  # noqa: BLE001
                 logger.warning("tdx_quant realtime %s failed: %s", symbol, e)
         return pl.DataFrame(out) if out else pl.DataFrame()
@@ -778,6 +809,9 @@ class TdxQuantProvider:
                     row[f"ask{i + 1}_price"] = sellp[i] if i < len(sellp) else None
                     row[f"ask{i + 1}_vol"] = sellv[i] if i < len(sellv) else None
                 rows.append(row)
+            except TdxGatewayDown as e:
+                logger.warning("tdx_quant depth5 中止: %s", e)
+                break
             except Exception as e:  # noqa: BLE001
                 logger.warning("tdx_quant depth5 %s failed: %s", symbol, e)
         return pl.DataFrame(rows) if rows else pl.DataFrame()
@@ -850,6 +884,9 @@ class TdxQuantProvider:
                     "float_mv": _f(v.get("Ltsz")),
                     "date": datetime.now().strftime("%Y-%m-%d"),
                 })
+            except TdxGatewayDown as e:
+                logger.warning("tdx_quant valuation 中止: %s", e)
+                break
             except Exception as e:  # noqa: BLE001
                 logger.warning("tdx_quant valuation %s failed: %s", symbol, e)
         return pl.DataFrame(rows) if rows else pl.DataFrame()

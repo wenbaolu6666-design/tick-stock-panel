@@ -1,4 +1,4 @@
-; ===========================================================================
+﻿; ===========================================================================
 ; Tick Stock Panel — Inno Setup 安装包脚本
 ; ===========================================================================
 ; 用途: 把 PyInstaller 产出的 dist/TSP/ 文件夹封装成
@@ -87,10 +87,16 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Source: "..\backend\dist\TSP\*"; DestDir: "{app}"; Excludes: "\data,\data\*"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; .NET 按 EXE 文件名读取同目录配置，不能放进 PyInstaller 的 _internal。
 Source: "TSP.exe.config"; DestDir: "{app}"; Flags: ignoreversion
+; 一键启动管理器 + 全功能启动（含通达信）
+Source: "TSP-AppManager.ps1"; DestDir: "{app}"; Flags: ignoreversion
+Source: "TSP-Full.cmd"; DestDir: "{app}"; Flags: ignoreversion
+Source: "TSP-Manager.cmd"; DestDir: "{app}"; Flags: ignoreversion
+Source: "autostart-tdx-login.ps1"; DestDir: "{app}"; Flags: ignoreversion
+Source: "app.env"; DestDir: "{app}"; DestName: ".env"; Flags: ignoreversion
 
 [Icons]
 ; 开始菜单
-Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
+Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"
 Name: "{group}\卸载 {#MyAppName}"; Filename: "{uninstallexe}"
 
 ; 桌面 (可选, 由 Task 控制)
@@ -101,7 +107,7 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 ; shellexec: 部分机器对 exe 路径存有「以管理员身份运行」兼容标志/策略要求提权,
 ; CreateProcess 无法弹 UAC 会直接报错误码 740; ShellExecute 遇提权正常弹 UAC,
 ; asInvoker 场景行为不变。
-Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent shellexec
+Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent shellexec
 
 [UninstallRun]
 ; 卸载前先关闭正在运行的应用 (否则 exe 被占用删不掉)

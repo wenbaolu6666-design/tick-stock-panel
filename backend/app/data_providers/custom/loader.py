@@ -1,4 +1,4 @@
-"""Load custom data source definitions from user data files."""
+﻿"""Load custom data source definitions from user data files."""
 from __future__ import annotations
 
 import hashlib
@@ -672,7 +672,23 @@ def _call_check(check_ref: str | None) -> tuple[bool, str]:
         return True, "ok"
     try:
         func = _load_entry(check_ref)
-        result = func()
+        # 硬超时: 插件自检可能做联网探测, 服务端无响应时必须快速降级,
+        # 否则会卡死整个后端导入 (桌面版实测 baostock 登录无限等待)。
+        import threading
+        box: dict = {}
+        def _run() -> None:
+            try:
+                box["value"] = func()
+            except BaseException as exc:  # noqa: BLE001
+                box["error"] = exc
+        th = threading.Thread(target=_run, daemon=True, name="plugin-check")
+        th.start()
+        th.join(2.0)
+        if th.is_alive():
+            return False, "检测超时 (>2s)"
+        if "error" in box:
+            raise box["error"]
+        result = box.get("value")
         # 兼容两种返回: (bool, str) 或 bool
         if isinstance(result, tuple):
             return bool(result[0]), str(result[1])

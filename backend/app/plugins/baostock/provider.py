@@ -1,4 +1,4 @@
-"""Baostock plugin — 免注册 TCP 数据源 (估值历史/行业快照)。
+﻿"""Baostock plugin — 免注册 TCP 数据源 (估值历史/行业快照)。
 
 - valuation: 日频 PE-TTM/PB-MRQ/PS-TTM/PCF-NCF-TTM + 换手率 (query_history_k_data_plus, 2016 起)
 - sector:    全市场行业归属快照 (query_stock_industry, 证监会口径)
@@ -25,8 +25,14 @@ def _ensure_login():
     global _logged_in
     with _lock:
         if not _logged_in:
+            import socket
             import baostock as bs
-            lg = bs.login()
+            prev = socket.getdefaulttimeout()
+            socket.setdefaulttimeout(15)  # baostock login has no timeout parameter
+            try:
+                lg = bs.login()
+            finally:
+                socket.setdefaulttimeout(prev)
             if lg.error_code != "0":
                 raise RuntimeError(f"baostock 登录失败: {lg.error_msg}")
             _logged_in = True
@@ -39,14 +45,17 @@ def _bs_symbol(symbol: str) -> str:
 
 
 def availability() -> tuple[bool, str]:
+    """Only check importability here.
+
+    Network login is deferred to the first real fetch: doing it during
+    plugin registration hangs backend startup when the baostock server is
+    unreachable (observed in the frozen desktop build).
+    """
     try:
-        _ensure_login()
-        import baostock as bs
-        rs = bs.query_trade_dates(start_date="2026-01-01", end_date="2026-01-15")
-        ok = rs.error_code == "0"
-        return (True, "ok (login success)" if ok else f"query error {rs.error_code}")
+        import baostock  # noqa: F401
+        return True, "ok (installed; login deferred)"
     except Exception as e:  # noqa: BLE001
-        return False, f"baostock 不可用: {e}"
+        return False, f"baostock 未安装: {e}"
 
 
 def _rows_of(rs) -> list[dict]:

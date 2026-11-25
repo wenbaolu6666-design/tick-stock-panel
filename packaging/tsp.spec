@@ -1,4 +1,4 @@
-# -*- mode: python ; coding: utf-8 -*-
+﻿# -*- mode: python ; coding: utf-8 -*-
 """PyInstaller 打包配置 — 桌面客户端 (onedir 模式)。
 
 为什么 onedir 而非 onefile:
@@ -81,17 +81,21 @@ hiddenimports += collect_submodules("polars")
 # datas 把清单 yaml 落盘 (frozen 下 plugins_dir() 恰好解析到 _internal/app/plugins),
 # hiddenimports 把 provider/client 塞进 PYZ。
 # 注: 其他内置插件如需进桌面包, 仿照 fuyao 双声明添加。
-datas += [
-    (str(ROOT / "backend" / "app" / "plugins" / "fuyao" / "plugin.yaml"), "app/plugins/fuyao"),
-    (str(ROOT / "backend" / "app" / "plugins" / "tdxquant" / "plugin.yaml"), "app/plugins/tdxquant"),
-]
-hiddenimports += [
-    "app.plugins.fuyao.provider",
-    "app.plugins.fuyao.client",
-    "app.plugins.tdxquant.provider",
-    "app.plugins.tdxquant.client",
-    "app.plugins.tdxquant.probe",
-]
+# -- 本地定制插件: 动态收集 backend/app/plugins/*/plugin.yaml ----------
+# tdxquant 已通过 plugin.yaml.disabled 下线, 不打包; 其余 25 个插件全部内置。
+_plugins_root = ROOT / "backend" / "app" / "plugins"
+for _pdir in sorted(_plugins_root.iterdir()) if _plugins_root.is_dir() else []:
+    _manifest = _pdir / "plugin.yaml"
+    if not _manifest.is_file():
+        continue
+    datas += [(str(_manifest), f"app/plugins/{_pdir.name}")]
+    hiddenimports += [f"app.plugins.{_pdir.name}.provider"]
+    if (_pdir / "client.py").is_file():
+        hiddenimports += [f"app.plugins.{_pdir.name}.client"]
+    if (_pdir / "bridge.py").is_file():
+        hiddenimports += [f"app.plugins.{_pdir.name}.bridge"]
+    if (_pdir / "probe.py").is_file():
+        hiddenimports += [f"app.plugins.{_pdir.name}.probe"]
 
 # ── 后端源码扩展 (app/custom/*) ──────────────────────────────────────
 # extensions/loader.py 运行时用 importlib.import_module + pkgutil.iter_modules
@@ -172,20 +176,14 @@ datas += [(str(ROOT / "backend" / "app" / "strategy" / "prompts"), "app/strategy
 
 # ── 排除不需要的重型依赖 (主包不含 vectorbt 回测链) ──────────────────
 excludes = [
-    "vectorbt",
-    "numba",
-    "llvmlite",
-    "matplotlib",
-    "plotly",
-    "ipywidgets",
-    "nbformat",
-    "nbconvert",
-    "jupyter",
-    "IPython",
-    "pytest",
-    "pytest_asyncio",
-    "ruff",
-    "mypy",
+    "vectorbt", "numba", "llvmlite", "matplotlib", "plotly",
+    "ipywidgets", "nbformat", "nbconvert", "jupyter", "IPython",
+    "pytest", "pytest_asyncio", "ruff", "mypy",
+    # Heavy ML stacks pulled in transitively by optional deps; not used by TSP runtime.
+    "torch", "torchvision", "torchaudio", "tensorflow", "tensorboard",
+    "keras", "scipy", "sklearn", "statsmodels", "transformers",
+    "sentence_transformers", "onnxruntime", "cv2", "seaborn",
+    "notebook", "jupyter_client", "jupyter_core", "ipykernel",
 ]
 
 a = Analysis(

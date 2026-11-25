@@ -2,6 +2,13 @@
 
 > 维护约定:每次改动自启动链/数据源栈后更新本文件。
 > 最后更新:2026-09-28(重装后迁移)
+> **2026-11-25 标准安装包**: `packaging/Output/TSP-Setup-0.3.37.exe`(约137MB) 已产出并实测。
+> 内含 PyInstaller onedir 桌面版(后端+前端一体) + 26 个内置插件 + 启动管理器。
+> 安装后开始菜单: TSP(一键启动面板) / TSP 全功能启动(含通达信) / TSP 启动管理器。
+> 安装包 `.env` 指向 `DATA_DIR=E:/tsp_data`; 全功能启动实测 80 秒内 TQ 17709 + 面板 3018 上线, 矩阵 35/35。
+> 重建链路: `pnpm exec vite build` -> `python -m PyInstaller packaging/tsp.spec --noconfirm --clean`
+> -> `ISCC.exe packaging/tsp.iss /DMyAppVersion=<version>`。
+
 > **2026-11-25 运维模式变更**: 计划任务 `TSP-AutoStart` 已 **停用**(Status=Disabled), 不再开机自启。
 > 改为按需启动管理器:
 >   - `TSP-Launcher.cmd status|start|start-all|stop|restart|open`

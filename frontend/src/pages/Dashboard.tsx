@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+﻿import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -81,6 +81,8 @@ export function Dashboard() {
     queryKey: QK.overviewMarket(selectedDate),
     queryFn: () => api.overviewMarket(selectedDate),
     staleTime: 5_000,
+    retry: 3,
+    retryDelay: 2_000,
     placeholderData: (prev) => prev,
   })
   const data = overview.data

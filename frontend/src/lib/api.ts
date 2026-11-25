@@ -3687,7 +3687,7 @@ export const api = {
     ),
   marketSnapshot: () =>
     request<{ as_of: string | null; rows: MarketSnapshotRow[] }>('/api/screener/market-snapshot'),
-  overviewMarket: (asOf?: string) => request<OverviewMarket>(`/api/overview/market${asOf ? `?as_of=${asOf}` : ''}`),
+  overviewMarket: (asOf?: string) => request<OverviewMarket>(`/api/overview/market${asOf ? `?as_of=${asOf}` : ''}`, { timeoutMs: 120_000 }),
 
   // 概念涨幅轮动矩阵: 每列(日期)各自把所有概念按当天涨幅从高到低排序
   rpsRotation: (days: number, kind?: 'concept' | 'industry', level?: number) =>

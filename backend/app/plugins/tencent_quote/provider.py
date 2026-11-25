@@ -27,6 +27,9 @@ _DATASETS = ("realtime", "daily", "minute", "valuation")
 _BASE = "https://qt.gtimg.cn/q="
 _FQKLINE = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
 _MKLINE = "https://ifzq.gtimg.cn/appstock/app/kline/mkline"
+# 腾讯单次 1 分钟 K 最多可返回 800 根（实测 >800 会回落到 320），
+# 约覆盖 3.3 个交易日；用于分钟增量同步可补全最近 3 个完整交易日。
+_MKLINE_BARS = 800
 _BATCH = 80
 _HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 _TZ = ZoneInfo("Asia/Shanghai")
@@ -317,7 +320,7 @@ class TencentQuoteProvider:
         freq: str = "5m",
         on_chunk_done=None,
     ) -> pl.DataFrame:
-        """分钟K（mkline）：m1/m5/m15/m30/m60，≤320 根。行序同日K，datetime 为北京时间墙钟。"""
+        """分钟K（mkline）：m1/m5/m15/m30/m60，单次最多 800 根。行序同日K，datetime 为北京时间墙钟。"""
         client = self._get_client()
         m = {"1m": "m1", "5m": "m5", "15m": "m15", "30m": "m30", "60m": "m60", "1": "m1", "5": "m5"}.get(str(freq), "m5")
         # 调用方可能传 tz-aware 窗口; mkline 条线为 naive 北京墙钟, 统一去 tz 再比较
@@ -333,7 +336,7 @@ class TencentQuoteProvider:
             try:
                 r = client.get(
                     _MKLINE,
-                    params={"param": f"{code},{m},,320"},
+                    params={"param": f"{code},{m},,{_MKLINE_BARS}"},
                     headers={**_HEADERS, "Referer": "https://gu.qq.com/"},
                 )
                 bars = ((r.json().get("data") or {}).get(code) or {}).get(m) or []

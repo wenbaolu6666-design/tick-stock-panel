@@ -27,6 +27,10 @@ export const EXT_DATA_QUERY_PREFIXES = new Set([
 ])
 
 export const QK = {
+  valuationHistory:       (symbol: string, days: number) => ['valuation-history', symbol, days] as const,
+  boardPeriods:           () => ['board-periods'] as const,
+  boardList:              (period: string) => ['board-list', period] as const,
+  boardMinute:            (code: string, date: string, period: string) => ['board-minute', code, date, period] as const,
   dataVersions: ['data-versions'] as const,
   extensionPackages: ['extension-packages'] as const,
   // 全局 / 共享 (Layout 预取)

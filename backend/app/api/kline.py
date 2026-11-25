@@ -1156,6 +1156,7 @@ def get_minute(
     symbol: str = Query(..., description="标的代码"),
     trade_date: date | None = Query(None, alias="date", description="交易日期, 默认最新"),
     live: bool = Query(False, description="当日盘中跳过本地优先, 直接实时拉取(个股详情分时轮询用)"),
+    period: str = Query("1m", description="分钟周期: 1m/5m/15m/30m/60m (多周期为 E:/a 导入的只读历史表)"),
 ):
     """读取某只股票某天的分钟 K 线。
 
@@ -1178,7 +1179,8 @@ def get_minute(
         # 非交易日(周末/节假日)才回退到本地最近有数据的交易日。
         today = cn_today()
         # 同 /minute-batch: 周末必回退, 工作日休市以交易日探针「确定休市」为准
-        need_fallback = today.weekday() >= 5 or trading_day.is_trading_day() is False
+        # 多周期表是只读历史库, 没有"今天"可言, 恒回退到本地最近有数据的交易日
+        need_fallback = today.weekday() >= 5 or trading_day.is_trading_day() is False or period != "1m"
         if not need_fallback:
             now_cn = cn_now()
             after_close = now_cn.hour > 15 or (now_cn.hour == 15 and now_cn.minute >= 30)
@@ -1187,13 +1189,24 @@ def get_minute(
                 if latest_daily is None or latest_daily < today:
                     need_fallback = True
         if need_fallback:
-            recent = repo.latest_minute_date(symbol, asset_type=asset_type)
+            recent = repo.latest_minute_date(symbol, asset_type=asset_type, period=period)
             if recent is None:
                 recent = repo.latest_daily_date()
             trade_date = recent if recent is not None else today
         else:
             trade_date = today
     if trade_date is None:
+        if period != "1m":
+            # 多周期无本地数据即无数据, 不回退实时 1m 源 (会返回错周期的行)
+            return _gzip_payload(
+                request,
+                {
+                    "symbol": symbol, "name": stock_name, "stock_info": stock_info,
+                    "date": str(cn_today()), "rows": [], "source": "none",
+                    "asset_type": asset_type,
+                },
+                pref_key="minute_batch_compress",
+            )
         # 本地无任何分钟K, 尝试从当前有效分钟源拉取当天
         trade_date = cn_today()
         df = kline_sync.fetch_minute_single(
@@ -1228,7 +1241,7 @@ def get_minute(
         repo, symbol, trade_date, asset_type, stock_name,
     )
 
-    if live and trade_date == cn_today() and in_continuous_session():
+    if live and period == "1m" and trade_date == cn_today() and in_continuous_session():
         # 详情分时轮询: 当日盘中实时拉取最新一根K, 不落盘; 拉空(源侧延迟/
         # 时段边界)则落回下方本地优先路径。
         live_df = kline_sync.fetch_minute_single(
@@ -1251,10 +1264,12 @@ def get_minute(
                 pref_key="minute_batch_compress",
             )
 
-    df = repo.get_minute(symbol, trade_date, asset_type=asset_type)
+    df = repo.get_minute(symbol, trade_date, asset_type=asset_type, period=period)
 
     # 完整交易日应有 240 条分钟K；如果是今天(盘中)，期望条数按已交易分钟估算
-    expected = 240
+    # 多周期表 (E:/a 导入): 5m=48 / 15m=16 / 30m=8 / 60m=4 条
+    _PERIOD_BARS = {"1m": 240, "5m": 48, "15m": 16, "30m": 8, "60m": 4}
+    expected = _PERIOD_BARS.get(period, 240)
     today = cn_today()
     if trade_date == today:
         now = cn_now()
@@ -1269,6 +1284,8 @@ def get_minute(
             expected = 120 + (h - 13) * 60 + m
         else:
             expected = 240
+        if period != "1m":
+            expected = max(1, round(expected * _PERIOD_BARS.get(period, 240) / 240))
 
     is_complete = not df.is_empty() and len(df) >= expected * 0.9  # 允许 10% 容差
 

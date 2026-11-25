@@ -36,7 +36,6 @@ from app.data_providers.minute_normalizer import (
 from app.data_providers.minute_stream import iter_minute_frames
 from app.indicators.pipeline import filter_halt_days
 from app.market_time import CN_TZ, cn_now, cn_today
-from app.parquet import scan_daily_parquet
 from app.services import minute_adjust, preferences
 from app.services.shared_work import SharedWork, WorkBusyError
 from app.tickflow.capabilities import Cap, CapabilitySet
@@ -478,19 +477,17 @@ def _persist_daily_chunks(chunks, repo: KlineRepository) -> int:
             if not files:
                 continue
             target_dir = repo.store.data_dir / "kline_daily" / date_dir.name
-            target_dir.mkdir(parents=True, exist_ok=True)
-            existing = sorted(target_dir.glob("*.parquet"))
-            if not existing:
-                for index, staged in enumerate(files):
-                    replace_with_retry(staged, target_dir / f"part-stream-{index}.parquet")
-                continue
-            # 当天分区可能混有实时快照写的 quote_ts 列, 按存储 schema 读才不抛 SchemaError。
-            base = scan_daily_parquet(existing).collect(engine="streaming")
-            incoming = pl.scan_parquet(files).collect(engine="streaming")
-            merged = pl.concat([base, incoming], how="diagonal_relaxed").unique(
-                subset=["symbol", "date"], keep="last"
+            # 按日汇合全部 staged 分块后交给统一 upsert。不能把多个 staged 文件
+            # 直接提升为 part-stream-*: 跨分块重复键会在分区目录内永久并存,
+            # 后续矩阵扫描报 "requires unique date/symbol rows"。
+            frames = [
+                pl.read_parquet(staged)
+                for staged in [*sorted(target_dir.glob("*.parquet")), *files]
+            ]
+            incoming = pl.concat(frames, how="diagonal_relaxed").unique(
+                subset=["symbol", "date"], keep="last",
             )
-            repo.append_daily(merged)
+            repo.append_daily(incoming)
             for part in target_dir.glob("part-stream-*.parquet"):
                 part.unlink(missing_ok=True)
     finally:

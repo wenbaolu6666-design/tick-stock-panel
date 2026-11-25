@@ -55,3 +55,24 @@ def test_provider_fetch_uses_batch_and_returns_rows():
     rows = provider._fetch(["600519.SH", "000001.SZ"])
     assert len(rows) == 1
     assert "qt.gtimg.cn" in client.urls[0]
+
+def test_minute_requests_full_800_bar_window():
+    class _Resp:
+        def json(self):
+            return {"data": {"sh600519": {"m1": []}}}
+
+    class _FakeClient:
+        def __init__(self):
+            self.params = None
+
+        def get(self, url, params=None, headers=None):
+            self.params = params
+            return _Resp()
+
+        def close(self):
+            pass
+
+    client = _FakeClient()
+    provider = TencentQuoteProvider(client=client)
+    provider.get_minute(["600519.SH"], freq="1m")
+    assert client.params == {"param": "sh600519,m1,,800"}

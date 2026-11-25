@@ -50,17 +50,12 @@ def _route_fuyao(monkeypatch, provider):
     monkeypatch.setattr(custom, "get_provider", lambda name: provider)
 
 
-def test_sync_promotes_staged_files_without_reading_them_back(monkeypatch, repo):
+def test_sync_promotes_staged_rows_into_one_deduplicated_partition(monkeypatch, repo):
     provider = _StreamingProvider([
         _daily("000001.SZ", date(2020, 1, 2)),
         _daily("000002.SZ", date(2020, 1, 2)),
     ])
     _route_fuyao(monkeypatch, provider)
-    monkeypatch.setattr(
-        kline_sync.pl,
-        "scan_parquet",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("不应读回临时文件")),
-    )
 
     written = kline_sync.sync_and_persist_daily_batch(
         ["000001.SZ", "000002.SZ"], repo, object(),
@@ -69,9 +64,28 @@ def test_sync_promotes_staged_files_without_reading_them_back(monkeypatch, repo)
 
     assert written == 2
     parts = sorted((repo.store.data_dir / "kline_daily" / "date=2020-01-02").glob("*.parquet"))
-    assert len(parts) == 2
+    assert len(parts) == 1
     stored = pl.concat([pl.read_parquet(part) for part in parts])
     assert set(stored["symbol"].to_list()) == {"000001.SZ", "000002.SZ"}
+
+
+def test_sync_deduplicates_repeated_rows_on_first_write(monkeypatch, repo):
+    day = date(2020, 1, 2)
+    provider = _StreamingProvider([
+        _daily("000001.SZ", day),
+        _daily("000001.SZ", day).with_columns(close=pl.lit(10.8)),
+    ])
+    _route_fuyao(monkeypatch, provider)
+
+    kline_sync.sync_and_persist_daily_batch(
+        ["000001.SZ"], repo, object(),
+        start_date=datetime(2020, 1, 1), end_date=datetime(2020, 1, 2),
+    )
+
+    out = repo.store.data_dir / "kline_daily" / "date=2020-01-02" / "part.parquet"
+    stored = pl.read_parquet(out)
+    assert stored.height == 1
+    assert stored["close"].to_list() == [10.8]
 
 
 def test_sync_persists_streamed_fuyao_chunks_only_after_fetch(monkeypatch, repo):

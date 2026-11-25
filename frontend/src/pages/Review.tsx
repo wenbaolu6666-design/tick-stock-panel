@@ -990,7 +990,7 @@ function _DtPill({ item, idx, value, onOpenStock }: {
   return (
     <button
       type="button"
-      onClick={() => onOpenStock(item.thscode)}
+      onClick={() => { if (item.thscode) onOpenStock(item.thscode) }}
       className="group inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-elevated/40 py-0.5 pl-0.5 pr-2.5 transition-all hover:border-accent/40 hover:bg-elevated/70"
       title={`查看 ${item.name ?? item.thscode} · 净买 ${fmtVolume(value ?? null)}`}
     >
@@ -1107,7 +1107,7 @@ function _DtStockTable({ items, tab, onOpenStock }: {
           <button
             key={`${i.thscode}-${i.range_days ?? 1}`}
             type="button"
-            onClick={() => onOpenStock(i.thscode)}
+            onClick={() => { if (i.thscode) onOpenStock(i.thscode) }}
             className="flex w-full items-center gap-2 border-t border-border/30 px-2.5 py-2 text-left text-[11px] transition-colors hover:bg-accent/[0.05]"
             title={`查看 ${i.name ?? i.thscode} 详情`}
           >
@@ -1209,7 +1209,7 @@ function _DtSeatList({ seats, onOpenStock }: {
                 <button
                   key={`${s.name}-${r.thscode}`}
                   type="button"
-                  onClick={() => onOpenStock(r.thscode)}
+                  onClick={() => { if (r.thscode) onOpenStock(r.thscode) }}
                   className="inline-flex items-baseline gap-1.5 rounded-full border border-border/60 bg-surface/60 px-2 py-0.5 text-[10px] transition-all hover:border-accent/40 hover:text-accent"
                   title={`查看 ${r.name ?? r.thscode} 详情`}
                 >

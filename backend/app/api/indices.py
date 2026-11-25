@@ -80,6 +80,7 @@ def get_index_minute(
     request: Request,
     symbol: str = Query(..., description="指数代码, 如 000001.SH"),
     trade_date: date | None = Query(None, alias="date", description="交易日期, 休市时默认最近本地指数交易日"),
+    period: str = Query("1m", description="分钟周期: 1m/5m/15m/30m/60m"),
 ):
     """实时读取指数分钟 K。不写入股票分钟 parquet。
 
@@ -105,6 +106,19 @@ def get_index_minute(
             "rows": [],
             "source": "future",
         }
+    # 本地优先: E:/a 导入的指数分钟历史 (1m 覆盖 2017-2021)。命中即返回,
+    # 不再走实时源 —— 实时源给不出 2021 年之前的分时。
+    local = repo.get_minute(symbol, day, asset_type="index", period=period)
+    if not local.is_empty():
+        return {
+            "symbol": symbol,
+            "name": info.get("name"),
+            "index_info": info,
+            "date": str(day),
+            "rows": local.to_dicts(),
+            "source": "local",
+        }
+
     cache_key = (symbol, day.isoformat(), kline_sync._selected_minute_provider_name())
     now = time.monotonic()
     with _index_minute_cache_lock:

@@ -275,13 +275,26 @@ class DataStore:
         if self._has_parquet("kline_minute"):
             minute_parts.append("""
                 SELECT symbol, datetime, open, high, low, close, volume, amount,
-                       'stock' AS asset_type, 'tickflow' AS source
+                       'stock' AS asset_type, '1m' AS period, 'tickflow' AS source
                 FROM kline_minute
+            """)
+        for _p in ("5m", "15m", "30m", "60m"):
+            if self._has_parquet(f"kline_minute_{_p}"):
+                minute_parts.append(f"""
+                    SELECT symbol, datetime, open, high, low, close, volume, amount,
+                           'stock' AS asset_type, '{_p}' AS period, 'tickflow' AS source
+                    FROM kline_minute_{_p}
+                """)
+        if self._has_parquet("kline_index_minute"):
+            minute_parts.append("""
+                SELECT symbol, datetime, open, high, low, close, volume, amount,
+                       'index' AS asset_type, '1m' AS period, 'tickflow' AS source
+                FROM kline_index_minute
             """)
         if self._has_parquet("kline_etf_minute"):
             minute_parts.append("""
                 SELECT symbol, datetime, open, high, low, close, volume, amount,
-                       'etf' AS asset_type, 'tickflow' AS source
+                       'etf' AS asset_type, '1m' AS period, 'tickflow' AS source
                 FROM kline_etf_minute
             """)
 
@@ -398,6 +411,13 @@ class KlineRepository:
         self._etf_enriched_glob = str(store.data_dir / "kline_etf_enriched" / "**" / "*.parquet")
         self._minute_glob = str(store.data_dir / "kline_minute" / "**" / "*.parquet")
         self._etf_minute_glob = str(store.data_dir / "kline_etf_minute" / "**" / "*.parquet")
+        # 多周期历史分钟 (E:/a 导入): 5/15/30/60 分钟, 股票与京市(.BJ)共用同表同分区约定
+        self._period_minute_globs = {
+            p: str(store.data_dir / f"kline_minute_{p}" / "**" / "*.parquet")
+            for p in ("5m", "15m", "30m", "60m")
+        }
+        # 指数 1 分钟 (E:/a 导入, 2017-2021)
+        self._index_minute_glob = str(store.data_dir / "kline_index_minute" / "**" / "*.parquet")
         self._inst_glob = str(store.data_dir / "instruments" / "**" / "*.parquet")
         self._index_inst_glob = str(store.data_dir / "instruments_index" / "**" / "*.parquet")
         self._etf_inst_glob = str(store.data_dir / "instruments_etf" / "**" / "*.parquet")
@@ -1774,9 +1794,48 @@ class KlineRepository:
             return self.get_etf_daily(symbol, start, end, columns)
         return pl.DataFrame()
 
-    def _minute_glob_for(self, asset_type: str) -> str:
-        """按资产类型选择分钟K parquet glob。ETF 分钟数据独立存储于 kline_etf_minute。"""
-        return self._etf_minute_glob if asset_type == "etf" else self._minute_glob
+    #: 分钟周期标识 (1m 为存量实时同步表, 其余为 E:/a 历史导入表)
+    MINUTE_PERIODS = ("1m", "5m", "15m", "30m", "60m")
+
+    def minute_period_tables(self) -> dict[str, str]:
+        """周期 -> 表名, 仅返回本地已有 parquet 的周期 (调用方探测用)。"""
+        out: dict[str, str] = {}
+        if self._has_parquet("kline_minute"):
+            out["1m"] = "kline_minute"
+        if self._has_parquet("kline_etf_minute"):
+            out["etf_1m"] = "kline_etf_minute"
+        for p in self._period_minute_globs:
+            if self._has_parquet(f"kline_minute_{p}"):
+                out[p] = f"kline_minute_{p}"
+        if self._has_parquet("kline_index_minute"):
+            out["index_1m"] = "kline_index_minute"
+        return out
+
+    def _minute_table_name(self, asset_type: str, period: str = "1m") -> str:
+        """资产类型 + 周期 -> 物理表名 (视图名与表名一致)。"""
+        if period != "1m" and period in self._period_minute_globs:
+            return f"kline_minute_{period}"
+        if asset_type == "index":
+            return "kline_index_minute"
+        if asset_type == "etf":
+            return "kline_etf_minute"
+        return "kline_minute"
+
+    def _minute_glob_for(self, asset_type: str, period: str = "1m") -> str:
+        """按资产类型与周期选择分钟K parquet glob。
+
+        - index -> kline_index_minute (E:/a 导入, 仅 1m)
+        - etf   -> kline_etf_minute (实时同步, 仅 1m)
+        - 5m/15m/30m/60m -> kline_minute_{period} (E:/a 历史导入, 只读)
+        - 其余 -> kline_minute (实时同步)
+        """
+        if period != "1m":
+            return self._period_minute_globs.get(period, self._minute_glob)
+        if asset_type == "index":
+            return self._index_minute_glob
+        if asset_type == "etf":
+            return self._etf_minute_glob
+        return self._minute_glob
 
     def _maybe_adjust_minute(self, df: pl.DataFrame, asset_type: str) -> pl.DataFrame:
         """原始基准标记开启时应用读取时复权投影 (services/minute_adjust 三层架构)。
@@ -1792,9 +1851,9 @@ class KlineRepository:
             logger.warning("分钟复权投影失败, 按原始数据返回: %s", e)
             return df
 
-    def _minute_partition_path(self, asset_type: str, trade_date: date) -> str | None:
+    def _minute_partition_path(self, asset_type: str, trade_date: date, period: str = "1m") -> str | None:
         """单日分钟K分区文件路径; 不存在 (含存量未迁移的旧 symbol= 分区) 返回 None。"""
-        base = self._minute_glob_for(asset_type).rsplit("/", 2)[0]
+        base = self._minute_glob_for(asset_type, period).rsplit("/", 2)[0]
         p = f"{base}/date={trade_date.isoformat()}/part.parquet"
         return p if Path(p).exists() else None
 
@@ -1803,6 +1862,7 @@ class KlineRepository:
         symbol: str,
         trade_date: date,
         asset_type: str = "stock",
+        period: str = "1m",
     ) -> pl.DataFrame:
         """分钟K查询 — 优先直读当日分区文件 (免全树 footer IO), 分区缺失回退全树扫描。
 
@@ -1810,8 +1870,8 @@ class KlineRepository:
         本地分钟历史线性增长; 单日数据按约定完整落在 date= 分区内, 谓词不变。
         """
         try:
-            part = self._minute_partition_path(asset_type, trade_date)
-            source = part if part is not None else self._minute_glob_for(asset_type)
+            part = self._minute_partition_path(asset_type, trade_date, period)
+            source = part if part is not None else self._minute_glob_for(asset_type, period)
             df = guarded_collect(
                 pl.scan_parquet(source).filter(
                     (pl.col("symbol") == symbol)
@@ -1828,6 +1888,7 @@ class KlineRepository:
         symbols: list[str],
         trade_date: date,
         asset_type: str = "stock",
+        period: str = "1m",
     ) -> pl.DataFrame:
         """批量分钟K查询 — 多 symbol 一次 scan, 优先直读当日分区文件。
 
@@ -1837,8 +1898,8 @@ class KlineRepository:
         if not symbols:
             return pl.DataFrame()
         try:
-            part = self._minute_partition_path(asset_type, trade_date)
-            source = part if part is not None else self._minute_glob_for(asset_type)
+            part = self._minute_partition_path(asset_type, trade_date, period)
+            source = part if part is not None else self._minute_glob_for(asset_type, period)
             df = guarded_collect(
                 pl.scan_parquet(source).filter(
                     pl.col("symbol").is_in(symbols)
@@ -1856,6 +1917,7 @@ class KlineRepository:
         start: date,
         end: date,
         asset_type: str = "stock",
+        period: str = "1m",
     ) -> pl.DataFrame:
         """多 symbol × 日期范围的分钟K查询 (分钟K精确回测用)。
 
@@ -1865,7 +1927,7 @@ class KlineRepository:
         if not symbols:
             return pl.DataFrame()
         try:
-            lf = pl.scan_parquet(self._minute_glob_for(asset_type))
+            lf = pl.scan_parquet(self._minute_glob_for(asset_type, period))
             available = set(lf.collect_schema().names())
             select_cols = [c for c in ["symbol", "datetime", "open", "high", "low", "close", "volume", "amount"] if c in available]
             df = guarded_collect(
@@ -1888,6 +1950,7 @@ class KlineRepository:
         symbols: list[str],
         dates: list[date],
         asset_type: str = "stock",
+        period: str = "1m",
     ) -> pl.DataFrame:
         """按日期列表精确读取分钟K分区文件 (分钟K精确回测用)。
 
@@ -1901,7 +1964,7 @@ class KlineRepository:
         """
         if not symbols or not dates:
             return pl.DataFrame()
-        base = self._etf_minute_glob.rsplit("/", 2)[0] if asset_type == "etf" else self._minute_glob.rsplit("/", 2)[0]
+        base = self._minute_glob_for(asset_type, period).rsplit("/", 2)[0]
         # 收集存在的分区文件路径, 避免对不存在的文件 scan 报错
         parts: list[str] = []
         for d in dates:
@@ -2089,11 +2152,11 @@ class KlineRepository:
     # DuckDB 查询 (冷路径: 统计/元数据/自定义SQL)
     # ================================================================
 
-    def latest_minute_date(self, symbol: str, asset_type: str = "stock") -> date | None:
+    def latest_minute_date(self, symbol: str, asset_type: str = "stock", period: str = "1m") -> date | None:
         # 注意: 必须走 execute_one (cursor+close)。直连 self.db.execute(...).fetchone()
         # 的未消费结果集会把首个分区 parquet 的句柄钉在共享连接上, Windows 下阻塞
         # 同步写入的 os.replace → 个股分时"补齐数据"500。
-        table = "kline_etf_minute" if asset_type == "etf" else "kline_minute"
+        table = self._minute_table_name(asset_type, period)
         try:
             row = self.execute_one(
                 f"SELECT max(CAST(datetime AS DATE)) FROM {table} WHERE symbol = ?",
@@ -2552,7 +2615,7 @@ class KlineRepository:
                 cursor.close()
 
     def rebuild_views(self) -> None:
-        """重建全部 13 张 parquet 视图并重挂 unified 视图 —— 唯一权威实现。
+        """重建全部 18 张 parquet 视图并重挂 unified 视图 —— 唯一权威实现。
 
         原先 daily_pipeline._refresh_views(盘后管道) 与 /api/data/clear(清库) 各自
         内联了同一份视图重建 SQL, 清库那份还漏了几张视图导致漂移。此处收敛为单一入口:
@@ -2568,6 +2631,11 @@ class KlineRepository:
             "kline_etf_enriched": f"{d}/kline_etf_enriched/**/*.parquet",
             "kline_etf_minute": f"{d}/kline_etf_minute/**/*.parquet",
             "kline_minute": f"{d}/kline_minute/**/*.parquet",
+            "kline_minute_5m": f"{d}/kline_minute_5m/**/*.parquet",
+            "kline_minute_15m": f"{d}/kline_minute_15m/**/*.parquet",
+            "kline_minute_30m": f"{d}/kline_minute_30m/**/*.parquet",
+            "kline_minute_60m": f"{d}/kline_minute_60m/**/*.parquet",
+            "kline_index_minute": f"{d}/kline_index_minute/**/*.parquet",
             "adj_factor": f"{d}/adj_factor/**/*.parquet",
             "adj_factor_etf": f"{d}/adj_factor_etf/**/*.parquet",
             "instruments": f"{d}/instruments/**/*.parquet",
@@ -2643,9 +2711,15 @@ class KlineRepository:
         重试耗尽退回锁内直读直写 (正确性优先, 牺牲隔离性)。
         """
         def _merge(existing: pl.DataFrame) -> pl.DataFrame:
+            # 空分区也必须对 incoming 去重。上游流式分块/多源合并可能在同一批里
+            # 返回重复 (symbol, date), 旧分支直接落 incoming 会让分区永久保留
+            # 重复键, 最终拖垮回测矩阵预热与数据统计。
+            incoming_unique = incoming.unique(
+                subset=["symbol", "date"], keep="last",
+            )
             if existing.is_empty():
-                return incoming.sort(["symbol", "date"])
-            return pl.concat([existing, incoming], how="diagonal_relaxed").unique(
+                return incoming_unique.sort(["symbol", "date"])
+            return pl.concat([existing, incoming_unique], how="diagonal_relaxed").unique(
                 subset=["symbol", "date"], keep="last"
             ).sort(["symbol", "date"])
 

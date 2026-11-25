@@ -200,6 +200,11 @@ async def _application_lifespan(app: FastAPI):
             repo.refresh_cache(background=False)
         except Exception as exc:
             logger.warning("deferred warmup failed: %s", exc)
+        else:
+            # refresh_cache(background=False) 是同步完成路径, 不会经过
+            # _start_enriched_warmup 的 finally 回调; 必须在这里显式放行
+            # 数据页统计, 否则预热成功后状态仍永久显示 stats_pending。
+            app.state.indicators_ready = True
 
     threading.Thread(target=_deferred_warmup, daemon=True, name="deferred-warmup").start()
 

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""东财系历史分钟 CSV 导入 v2: E:/a 按年 zip → TSP kline_minute 分区库。
+"""东财系历史分钟 CSV 导入 v2: 按年 zip → TSP kline_minute 分区库。
 
 v1 教训: 按"标的"循环 + 单标的 merge = 每标的读写全市场分区文件(O(n²), 实测
 CPU 烧 176 分钟零产出卡死)。v2 反转: 先把一年 ~26000 万行按月聚合内存化,
@@ -13,6 +13,7 @@ CPU 烧 176 分钟零产出卡死)。v2 反转: 先把一年 ~26000 万行按月
 """
 import csv
 import io
+import os
 import sys
 import time
 import zipfile
@@ -20,8 +21,11 @@ from pathlib import Path
 
 import polars as pl
 
-ZIP_DIR = Path(r"E:/a/A股_分时数据_沪深/1分钟_按年汇总")
-DATA_DIR = Path(r"D:/WenPaul/Documents/量化炒股/tick-stock-panel/data")
+# 源 zip 目录: 东财按年汇总。E:/a 已于 2026-11-21 清理, 重新导入前需先下载新源,
+# 并用环境变量 TSP_MINUTE_SRC 指向新目录(默认值仅为历史路径)。
+ZIP_DIR = Path(os.environ.get("TSP_MINUTE_SRC", r"E:/a/A股_分时数据_沪深/1分钟_按年汇总"))
+# 目标数据根: 与后端 settings.data_dir 一致(现为 E:/tsp_data), 可用 TSP_DATA_DIR 覆盖。
+DATA_DIR = Path(os.environ.get("TSP_DATA_DIR", r"E:/tsp_data"))
 
 
 def read_year_to_monthly(z: zipfile.ZipFile, year: int) -> dict[int, pl.DataFrame]:
@@ -66,6 +70,14 @@ def read_year_to_monthly(z: zipfile.ZipFile, year: int) -> dict[int, pl.DataFram
 
 
 def main() -> None:
+    if not ZIP_DIR.exists():
+        print(
+            f"[FATAL] 源 zip 目录不存在: {ZIP_DIR}\n"
+            "        E:/a 已于 2026-11-21 清理。重新导入前请从东财网页端下载按年汇总 zip\n"
+            "        (http://www.dyyboard.ltd, 每日盘后更新), 并用环境变量 TSP_MINUTE_SRC 指向新目录。",
+            flush=True,
+        )
+        sys.exit(2)
     y0 = int(sys.argv[1])
     y1 = int(sys.argv[2]) if len(sys.argv) > 2 else y0
     from app.services import kline_sync

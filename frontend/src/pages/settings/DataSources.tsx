@@ -1114,9 +1114,9 @@ function TickFlowDetail({ active, matrix }: { active: boolean; matrix?: Capabili
   // TickFlow 默认源卡隐藏(用户要求): 全部能力已由插件覆盖
   if (true) return null;
   const caps = matrix?.capabilities ?? []
-  const tier = matrix?.tickflow_tier
+  const tier = matrix?.tickflow_tier ?? ''
   const { data: tfCaps } = useCapabilities()
-  const capEntries = tfCaps ? Object.entries(tfCaps.capabilities) : []
+  const capEntries = Object.entries(tfCaps?.capabilities ?? {})
   const invalidate = useInvalidateTierRelated()
   const redetect = useMutation({
     mutationFn: () => api.redetectCapabilities(),

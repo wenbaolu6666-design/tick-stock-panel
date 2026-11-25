@@ -5236,6 +5236,41 @@ export const api = {
       timeoutMs: null,
       body: JSON.stringify(payload),
     }),
+
+  // 估值股本日频历史(本地 valuation_local)
+  valuationHistory: (params: { symbol: string; days?: number }) => {
+    const q = new URLSearchParams()
+    q.set('symbol', params.symbol)
+    if (params.days) q.set('days', String(params.days))
+    return request<{ provider: string; symbol: string; rows: Array<Record<string, unknown>> }>(
+      `/api/valuation/history?${q.toString()}`,
+    )
+  },
+
+  // 板块分时(本地 board_local)
+  boardMinute: (params: { board_code: string; date?: string; period?: string; days?: number }) => {
+    const q = new URLSearchParams()
+    q.set('board_code', params.board_code)
+    if (params.date) q.set('date', params.date)
+    if (params.period) q.set('period', params.period)
+    if (params.days) q.set('days', String(params.days))
+    return request<{ provider: string; board_code: string; period: string; rows: Array<Record<string, unknown>> }>(
+      `/api/board/minute?${q.toString()}`,
+    )
+  },
+  boardList: (period = 'm1') =>
+    request<{ period: string; count: number; boards: Array<{ board_code: string; board_name: string }> }>(
+      `/api/board/boards?period=${period}`,
+    ),
+  boardPeriods: () =>
+    request<{ periods: string[] }>('/api/board/periods'),
+
+  // 内置预设 (概念/行业) 手动获取数据: 走结构转换, 保证 schema 一致
+  extDataPresetFetch: (id: string) =>
+    request<{ status: string; rows: number }>(
+      `/api/ext-data/presets/${id}/fetch`,
+      { method: 'POST' },
+    ),
 }
 
 // ===== Pipeline =====

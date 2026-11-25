@@ -194,6 +194,13 @@ class TdxLocalProvider:
                 continue
             for f in p.glob(f"{sub}*.day"):
                 code = f.stem[2:].zfill(6)
+                # vipdoc 同时包含指数/板块(.day), 只有真实股票代码才进入股票池。
+                if suffix == "SH" and not code.startswith(("600", "601", "603", "605", "688", "689")):
+                    continue
+                if suffix == "SZ" and not code.startswith(("000", "001", "002", "003", "300", "301")):
+                    continue
+                if suffix == "BJ" and not code.startswith(("4", "8", "92")):
+                    continue
                 out.append({
                     "symbol": f"{code}.{suffix}",
                     "name": "",

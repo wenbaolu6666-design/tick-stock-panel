@@ -576,6 +576,8 @@ export function SettingsDataSourcesPanel({ highlight }: { highlight?: string } =
   const prefs = usePreferences()
   const sources = useQuery({ queryKey: QK.dataSources, queryFn: api.dataSources })
   const matrix = useQuery({ queryKey: QK.capabilityMatrix, queryFn: api.capabilityMatrix })
+  const tdxStatus = useQuery({ queryKey: ['tdx-status'], queryFn: api.tdxStatus, refetchInterval: (q: any) => (q.state.data?.tq_online ? 30000 : 5000) })
+  const launchTdx = useMutation({ mutationFn: api.launchTdx, onSuccess: (d) => { toast(d.message || '已启动通达信', 'success'); qc.invalidateQueries({ queryKey: ['tdx-status'] }); setTimeout(() => qc.invalidateQueries({ queryKey: ['tdx-status'] }), 5000) }, onError: (e: Error) => toast(`启用通达信失败: ${e.message}`, 'error') })
   const [selected, setSelected] = useState<string>('tickflow') // 当前在下方配置的源 name
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
 
@@ -743,6 +745,21 @@ export function SettingsDataSourcesPanel({ highlight }: { highlight?: string } =
             <span className="mx-0.5 rounded bg-elevated/70 px-1 py-px font-mono text-[10px] text-secondary">docs/plugin-development.md</span>
             (插件开发)
           </div>
+        </div>
+
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-btn border border-border/60 bg-elevated/20 px-3 py-2">
+          <div className="flex items-center gap-2 text-xs">
+            <Radio className="h-3.5 w-3.5 shrink-0 text-secondary" />
+            <span className="text-secondary">通达信 TQ</span>
+            <span className={tdxStatus.data?.tq_online ? 'text-success' : 'text-muted/70'}>
+              {tdxStatus.data?.tq_online ? '已启用（TQ 17709 在线）' : tdxStatus.data?.tdx_process_running ? '客户端已打开，网关未就绪' : '未启用（不会自动拉起）'}
+            </span>
+          </div>
+          <button type="button" onClick={() => launchTdx.mutate()} disabled={launchTdx.isPending || !!tdxStatus.data?.tq_online}
+            className="inline-flex h-7 items-center gap-1.5 rounded-btn border border-border/70 bg-surface px-2.5 text-[11px] font-medium text-secondary hover:bg-elevated disabled:opacity-50">
+            {launchTdx.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Zap className="h-3 w-3" />}
+            {tdxStatus.data?.tq_online ? '已启用' : launchTdx.isPending ? '启动中…' : '启用通达信'}
+          </button>
         </div>
 
         {/* 数据源卡片 - 横向网格 (配置入口) */}

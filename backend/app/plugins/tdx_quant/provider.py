@@ -229,8 +229,12 @@ def _kick_login_automation() -> None:
     与开机自启链 (autostart-all.ps1 step1b) 共用同一脚本与互斥锁，重复启动
     自动让位；前台拉起路径原先不带它，登录窗会停在前台等人工——此处补齐，
     使后端自愈拉起与开机自启行为一致。"""
-    ps1 = Path(__file__).resolve().parents[4] / "autostart-tdx-login.ps1"
-    if not ps1.exists():
+    candidates = []
+    if getattr(sys, "frozen", False):
+        candidates.append(Path(sys.executable).resolve().parent / "autostart-tdx-login.ps1")
+    candidates.append(Path(__file__).resolve().parents[4] / "autostart-tdx-login.ps1")
+    ps1 = next((p for p in candidates if p.exists()), None)
+    if ps1 is None:
         return
     for shell in ("pwsh", "powershell"):
         try:
@@ -245,81 +249,51 @@ def _kick_login_automation() -> None:
             return
 
 
-def ensure_tq_running(wait_seconds: float = 90.0) -> bool:
-    """TQ 网关不可用时前台拉起 TdxW（可见窗口完成自动登录/初始化），
-    网关上线后自动把窗口最小化。每进程一次；pytest 跳过。
-    TdxW 已在运行但网关死亡（僵尸）时不重复拉起——重启客户端需用户操作。
+def ensure_tq_running(wait_seconds: float = 0.0) -> bool:
+    """仅检查 TQ 网关状态，绝不自动拉起通达信。
+
+    手动启用请调用 launch_tdx_client()（设置页「启用通达信」按钮）。
     """
-    global _ENSURE_ATTEMPTED
+    return _tq_alive()
+
+
+def launch_tdx_client(wait_seconds: float = 0.0) -> tuple[bool, str]:
+    """用户手动触发：前台拉起 TdxW 并启动登录自动化。"""
     if _tq_alive():
-        return True
-    if "pytest" in sys.modules or _ENSURE_ATTEMPTED:
-        return False
-    _ENSURE_ATTEMPTED = True
+        return True, "TQ 网关已在线"
     if _tdx_process_running():
-        return False
-    # Race guard: autostart-all.ps1 may have JUST sent Start-Process for TdxW,
-    # but the process has not appeared in tasklist yet. Wait and recheck before
-    # double-launching (which would trigger the conflict dialog).
-    for _ in range(3):
-        time.sleep(4)
-        if _tq_alive():
-            return True
-        if _tdx_process_running():
-            return False
+        return False, "TdxW 已运行但 TQ 网关未就绪，请检查登录状态"
     exe = _find_tdx_exe()
     if exe is None:
-        return False
-    launched_pid = 0
+        return False, "未找到通达信客户端 TdxW.exe"
     try:
         si = subprocess.STARTUPINFO()
         si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        si.wShowWindow = 1  # SW_SHOWNORMAL：前台启动，窗口渲染 + 自动登录后 TQ 引擎才初始化
+        si.wShowWindow = 1
         proc = subprocess.Popen(
             [str(exe)], cwd=str(exe.parent),
-            creationflags=0x00000008,  # DETACHED_PROCESS
-            startupinfo=si, close_fds=True,
+            creationflags=0x00000008, startupinfo=si, close_fds=True,
         )
-        launched_pid = proc.pid
         _kick_login_automation()
-    except Exception:  # noqa: BLE001
-        return False
+    except Exception as exc:  # noqa: BLE001
+        return False, f"启动通达信失败: {exc}"
+    if wait_seconds > 0:
+        deadline = time.time() + wait_seconds
+        while time.time() < deadline:
+            time.sleep(2)
+            if _tq_alive():
+                _settle_tdx_windows(proc.pid)
+                return True, "通达信已启动，TQ 网关在线"
+    return True, "已启动通达信，等待登录完成（TQ 17709 上线后可刷新状态）"
 
-    deadline = time.time() + wait_seconds
-    while time.time() < deadline:
-        time.sleep(2)
-        if _tq_alive():
-            _settle_tdx_windows(launched_pid)
-            return True
-
-    # 网关迟到（客户端仍在登录/初始化）：后台继续探测，上线即最小化窗口并
-    # 自动重载数据源完成插件注册，全程无需手动操作。
-    def _late_register() -> None:
-        deadline2 = time.time() + 900
-        while time.time() < deadline2:
-            time.sleep(5)
-            if not _tq_alive():
-                continue
-            _settle_tdx_windows(launched_pid)
-            try:
-                from app.data_providers.custom import loader as _loader
-                _loader.load_all()
-                logger.info("tdx_quant: TQ 网关迟到上线，已自动重载数据源完成插件注册")
-            except Exception:  # noqa: BLE001
-                logger.exception("tdx_quant: late register reload failed")
-            return
-
-    threading.Thread(target=_late_register, daemon=True, name="tq-late-register").start()
-    return False
 
 def availability() -> tuple[bool, str]:
     if _tq_alive():
         return True, "ok"
-    if ensure_tq_running(wait_seconds=40.0):
-        return True, "ok (已自动拉起通达信)"
     if _tdx_process_running():
-        return False, "TdxW 已运行但 TQ 网关无响应，请重启通达信客户端后在数据源页重载"
-    return False, "未检测到通达信客户端，已尝试自动拉起未成功，请手动启动通达信后重载"
+        return False, "TdxW 已运行但 TQ 网关无响应，请在设置页重新启用或重启通达信"
+    return False, "未启用通达信（请在设置页点击「启用通达信」；不会自动拉起）"
+
 
 def _call(method: str, params: dict, timeout: float = 30.0) -> dict:
     global _gateway_down_until

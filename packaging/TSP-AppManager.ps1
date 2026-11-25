@@ -44,7 +44,6 @@ function Start-Full{
   } else {
     Write-Host "未找到通达信客户端: $TdxExe (将以降级模式启动)"
   }
-  Start-Tsp
 }
 function Stop-Tsp{
   Get-Process TSP -ErrorAction SilentlyContinue | Stop-Process -Force
@@ -91,7 +90,7 @@ function New-Btn($text,$x,$y,$w){
   $form.Controls.Add($b); return $b
 }
 $b1=New-Btn '一键启动（面板）' 24 150 220
-$b2=New-Btn '全功能启动（含通达信）' 264 150 220
+$b2=New-Btn '手动启用通达信' 264 150 220
 $b3=New-Btn '停止' 24 200 140
 $b4=New-Btn '打开浏览器' 180 200 140
 $b5=New-Btn '刷新状态' 336 200 148

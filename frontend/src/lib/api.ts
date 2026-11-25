@@ -1,4 +1,4 @@
-// 后端 API 客户端 — 全项目统一入口
+﻿// 后端 API 客户端 — 全项目统一入口
 //
 // Dev: Vite 按启动脚本解析出的 BACKEND_HOST/BACKEND_PORT 代理 /api
 // Prod:同源(FastAPI 托管前端 dist)
@@ -2963,6 +2963,8 @@ export const api = {
   deleteDataSource: (name: string) =>
     request<DataSourcesResponse>(`/api/settings/data-sources/${encodeURIComponent(name)}`, { method: 'DELETE' }),
   reloadDataSources: () => request<DataSourcesResponse>('/api/settings/data-sources/reload', { method: 'POST' }),
+  tdxStatus: () => request<{ tq_online: boolean; tdx_process_running: boolean }>('/api/settings/tdx/status'),
+  launchTdx: () => request<{ ok: boolean; message: string }>('/api/settings/tdx/launch', { method: 'POST' }),
   installPlugin: (name: string) => {
     // npm install 可能耗时较长, 用 6 分钟超时
     const controller = new AbortController()

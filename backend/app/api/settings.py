@@ -1,4 +1,4 @@
-"""设置 API — Key 配置 / 模式切换。
+﻿"""设置 API — Key 配置 / 模式切换。
 
 提供面向非开发者的 UI 配置入口,避免逼用户改 .env。
 """
@@ -2563,3 +2563,23 @@ def sound_packs_file(name: str, request: Request) -> FileResponse:
         raise HTTPException(status_code=404, detail=f"语音包 '{name}' 不存在")
     media_type = _SOUND_PACK_MEDIA_TYPES.get(path.suffix.lower(), "application/octet-stream")
     return FileResponse(path, media_type=media_type)
+
+@router.get("/tdx/status")
+def get_tdx_status() -> dict:
+    """Manual TDX/TQ status — never auto-launches the client."""
+    from app.plugins.tdx_quant import provider as tdx
+    return {
+        "tq_online": bool(tdx._tq_alive()),
+        "tdx_process_running": bool(tdx._tdx_process_running()),
+    }
+
+
+@router.post("/tdx/launch")
+def launch_tdx() -> dict:
+    """User-initiated TDX launch from the settings UI."""
+    from app.plugins.tdx_quant.provider import launch_tdx_client
+    ok, message = launch_tdx_client(wait_seconds=0.0)
+    if not ok:
+        raise HTTPException(status_code=409, detail=message)
+    return {"ok": True, "message": message}
+

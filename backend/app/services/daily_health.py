@@ -1,4 +1,4 @@
-"""日K异常及待重算状态。与一次自检报告分离, 缩小检查范围不能解除旧异常。
+﻿"""日K异常及待重算状态。与一次自检报告分离, 缩小检查范围不能解除旧异常。
 
 同一记录只有在日K校验及依赖重算均完成后才移除; 重启/取消/实时刷新不会绕过它。
 读取仅 stat + 小 JSON 缓存, 不在策略或行情热路径扫描 Parquet。
@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import threading
 import uuid
-from datetime import date
+from datetime import date, timedelta
 from functools import lru_cache
 from pathlib import Path
 
@@ -179,8 +179,14 @@ def assert_usable(
     enriched_only: bool = False,
 ) -> None:
     end = end or date.max
+    today = date.today()
+    stale_before = (today - timedelta(days=30)).isoformat()
     for entry in snapshot(root)["entries"]:
-        if enriched_only and not entry["needs_raw"] and not entry.get("needs_enriched", True):
+        # 仅待重算(原始日K已校验)不应阻断看板/矩阵读取。
+        if not entry.get("needs_raw", True):
+            continue
+        # 30 天以前的历史脏数据不应阻断当前看板; 仍保留在自检报告中供手动修复。
+        if entry["day"] < stale_before:
             continue
         dependency = entry["asset_type"] == "index" and asset_type in {"stock", "etf"}
         if ((entry["asset_type"] == asset_type or dependency) and entry["day"] <= end.isoformat()

@@ -51,6 +51,13 @@ def _sync_engine(request: Request) -> None:
     engine = getattr(request.app.state, "monitor_engine", None)
     if engine is not None:
         repo = request.app.state.repo
+        strategy_engine = getattr(request.app.state, "strategy_engine", None)
+        if strategy_engine is not None:
+            available = {
+                str(meta["id"])
+                for meta in strategy_engine.list_strategies(include_research=True)
+            }
+            monitor_rules.disable_missing_strategy_rules(_data_dir(request), available)
         rules = [
             _reconcile_index_asset_type(r, repo)
             for r in monitor_rules.load_all(_data_dir(request))
@@ -223,6 +230,18 @@ def list_rules(request: Request):
         _reconcile_index_asset_type(r, repo)
         for r in monitor_rules.load_all(_data_dir(request))
     ]
+    strategy_engine = getattr(request.app.state, "strategy_engine", None)
+    if strategy_engine is not None:
+        for rule in rules:
+            if rule.get("type") != "strategy":
+                continue
+            sid = str(rule.get("strategy_id") or "")
+            try:
+                exists = bool(sid and strategy_engine.has(sid))
+            except Exception:  # noqa: BLE001
+                exists = False
+            if not exists:
+                rule["runtime_warning"] = "关联策略已不存在，规则已暂停；请删除或重新选择策略"
     from app.services.kline_sync import intraday_monitor_support
 
     support = intraday_monitor_support(getattr(request.app.state, "capabilities", None))

@@ -486,6 +486,15 @@ async def _application_lifespan(app: FastAPI):
         logger.warning("strategy monitor migration failed: %s", e)
 
     try:
+        available_strategy_ids = {
+            str(meta["id"]) for meta in strategy_engine.list_strategies(include_research=True)
+        }
+        disabled = mr_store.disable_missing_strategy_rules(store.data_dir, available_strategy_ids)
+        if disabled:
+            logger.warning(
+                "monitor engine: 已停用 %d 条引用不存在策略的规则: %s",
+                len(disabled), [r.get("strategy_id") for r in disabled],
+            )
         rules = mr_store.load_all(store.data_dir)
         monitor_engine.set_rules(rules)
         logger.info("monitor engine loaded: %d rules", monitor_engine.rule_count)

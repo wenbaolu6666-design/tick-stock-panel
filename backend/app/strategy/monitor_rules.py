@@ -394,6 +394,28 @@ def strategy_rule_id(strategy_id: str) -> str:
     return f"{STRATEGY_RULE_PREFIX}{strategy_id}"
 
 
+def disable_missing_strategy_rules(data_dir: Path, available_ids: set[str] | list[str]) -> list[dict]:
+    """停用引用不存在策略的监控规则，返回本次变更的规则。
+
+    去内置化/删除策略后，历史规则可能仍留在 user_data/monitor_rules。它们既不会
+    再触发，又可能在编辑或某些单策略接口中返回 ``unknown strategy``。启动和每次
+    策略集变更时做一次幂等收敛：保留规则和告警历史，只把 enabled 置为 False。
+    """
+    available = {str(sid) for sid in available_ids if sid}
+    changed: list[dict] = []
+    for rule in load_all(data_dir):
+        if rule.get("type") != "strategy" or rule.get("enabled") is False:
+            continue
+        sid = str(rule.get("strategy_id") or "")
+        if not sid or sid in available:
+            continue
+        updated = dict(rule)
+        updated["enabled"] = False
+        save_one(data_dir, updated)
+        changed.append(updated)
+    return changed
+
+
 def migrate_strategy_monitors(data_dir: Path, strategy_ids: list[str], strategy_names: dict[str, str]) -> list[dict]:
     """把 preferences.strategy_monitor_ids 里的策略,同步生成/更新 type=strategy 规则。
 

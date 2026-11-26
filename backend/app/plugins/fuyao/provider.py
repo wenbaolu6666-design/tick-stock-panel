@@ -40,10 +40,11 @@ from pathlib import Path
 import polars as pl
 import pyarrow.parquet as pq
 
+from app.data_providers.base import ProviderRequestError
 from app.data_providers.normalizer import DAILY_COLS, normalize_daily
 from app.indicators.pipeline import filter_halt_days
 from app.plugins.fuyao import client as fuyao_client
-from app.plugins.fuyao.client import FuyaoClient, FuyaoError
+from app.plugins.fuyao.client import FuyaoClient, FuyaoError, FuyaoUnknownSymbolError
 
 logger = logging.getLogger(__name__)
 
@@ -358,6 +359,19 @@ class FuyaoProvider:
         self._dump_memo[dump_kind] = df
         return df
 
+    def _daily10_for_window(self, start_d: date, end_d: date) -> pl.DataFrame:
+        """近端缓存覆盖不足时检查新 release, 避免常驻进程永久使用旧 dump。"""
+        kind = _DAILY10_DUMP_KIND
+        cached = kind in self._dump_memo or kind in self._dump_path_memo
+        dump = self._ensure_dump(kind, "daily_k_10d")
+        if cached and not _dump_covers(dump, start_d, end_d):
+            # 帧和路径必须一起失效, 否则仍会读回旧 release 的磁盘文件。
+            self._dump_memo.pop(kind, None)
+            self._dump_path_memo.pop(kind, None)
+            logger.info("扶摇近端日K缓存未覆盖 [%s ~ %s], 检查最新 dump", start_d, end_d)
+            dump = self._ensure_dump(kind, "daily_k_10d")
+        return dump
+
     def _ensure_daily_big_dump(self, start_d: date) -> Path | None:
         """10 年全量日K dump(约 172MB)。只要求覆盖窗口起点; 末端缺口由 10d dump 补。
 
@@ -475,6 +489,7 @@ class FuyaoProvider:
         """分批产出日K,供历史同步逐批落盘,避免全市场结果累积在内存。"""
         if not symbols or asset_type != "stock":
             return
+        symbols = list(dict.fromkeys(symbols))
         end_dt = end_time or datetime.now()
         start_dt = start_time or (end_dt - timedelta(days=365))
         start_d, end_d = start_dt.date(), end_dt.date()
@@ -482,7 +497,7 @@ class FuyaoProvider:
 
         if (end_d - start_d).days <= _RECENT_DUMP_DAYS:
             try:
-                dump = self._ensure_dump(_DAILY10_DUMP_KIND, "daily_k_10d")
+                dump = self._daily10_for_window(start_d, end_d)
                 if _dump_covers(dump, start_d, end_d):
                     df = self._daily_from_dump(dump, symset, start_d, end_d)
                     if on_chunk_done:
@@ -505,7 +520,7 @@ class FuyaoProvider:
             tail_start = max(start_d, dump_max + timedelta(days=1))
             if tail_start <= end_d and not _tail_ok(end_d, dump_max):
                 try:
-                    ten = self._ensure_dump(_DAILY10_DUMP_KIND, "daily_k_10d")
+                    ten = self._daily10_for_window(tail_start, end_d)
                     ten_dates = pl.from_epoch(
                         ten["date_ms"].cast(pl.Int64) + _SH_MS, time_unit="ms"
                     ).dt.date()
@@ -536,6 +551,7 @@ class FuyaoProvider:
             for kind, _, _ in sources
         )
         done = 0
+        unknown_symbols: set[str] = set()
         for kind, source_start, source_end in sources:
             if source_start > source_end:
                 continue
@@ -563,9 +579,14 @@ class FuyaoProvider:
                 for batch in batches:
                     rows: list[dict] = []
                     for symbol in batch:
+                        if symbol in unknown_symbols:
+                            continue
                         rows.extend(_kline_rows(
                             symbol,
-                            self._historical_bars(symbol, source_start, source_end),
+                            self._historical_bars(
+                                symbol, source_start, source_end,
+                                fail_loud=True, unknown_symbols=unknown_symbols,
+                            ),
                         ))
                         time.sleep(_HIST_INTERVAL_S)
                     df = normalize_daily(rows, source=self.name)
@@ -659,8 +680,20 @@ class FuyaoProvider:
         cols = [c for c in DAILY_COLS if c in out.columns]
         return out.select(cols).sort(["symbol", "date"]) if not out.is_empty() else out.select(cols)
 
-    def _historical_bars(self, symbol: str, start_d: date, end_d: date) -> list[dict]:
-        """按 ≤10 年窗口分片拉取单标的原始日K。中途失败软返回已得行, 不抛出。"""
+    def _historical_bars(
+        self,
+        symbol: str,
+        start_d: date,
+        end_d: date,
+        *,
+        fail_loud: bool = False,
+        unknown_symbols: set[str] | None = None,
+    ) -> list[dict]:
+        """按 ≤10 年窗口分片拉取单标的原始日K。
+
+        同步路径传 fail_loud=True: 明确未覆盖的代码仅跳过自身, 其他接口错误上浮,
+        由同步层标记失败并放弃暂存帧; 配价等探测路径保持软失败。
+        """
         out: list[dict] = []
         s = _ms_of_date(start_d)
         e = _ms_of_date(end_d)
@@ -668,7 +701,19 @@ class FuyaoProvider:
             chunk_end = min(e, s + _HIST_MAX_SPAN_MS - 1)
             try:
                 out.extend(self._get_client().historical_kline(symbol, s, chunk_end, adjust="none"))
+            except FuyaoUnknownSymbolError as err:
+                if err.symbol == symbol:
+                    if unknown_symbols is not None:
+                        unknown_symbols.add(symbol)
+                    logger.warning("扶摇历史日K未覆盖 %s,本轮跳过并保留本地历史", symbol)
+                    break
+                if fail_loud:
+                    raise ProviderRequestError(f"扶摇日K补查失败 {symbol}: {err}") from err
+                logger.warning("扶摇日K拉取失败 %s [%s ~ %s]: %s", symbol, start_d, end_d, err)
+                break
             except FuyaoError as err:
+                if fail_loud:
+                    raise ProviderRequestError(f"扶摇日K补查失败 {symbol}: {err}") from err
                 logger.warning("扶摇日K拉取失败 %s [%s ~ %s]: %s", symbol, start_d, end_d, err)
                 break
             if s + _HIST_MAX_SPAN_MS <= e:
@@ -934,7 +979,10 @@ class FuyaoProvider:
                     if src not in field_map and src not in row and isinstance(value, (int, float)):
                         row[src] = value
                 rows_out.append(row)
-        return pl.DataFrame(rows_out) if rows_out else pl.DataFrame()
+        return (
+            pl.DataFrame(rows_out, infer_schema_length=None)
+            if rows_out else pl.DataFrame()
+        )
 
     def _financial_metrics(self, symbols: list[str]) -> pl.DataFrame:
         client = self._get_client()
@@ -979,7 +1027,10 @@ class FuyaoProvider:
                         if value is not None:
                             row[self._METRICS_FIELD_MAP.get(index_id, index_id)] = value
             rows_out.append(row)
-        return pl.DataFrame(rows_out) if rows_out else pl.DataFrame()
+        return (
+            pl.DataFrame(rows_out, infer_schema_length=None)
+            if rows_out else pl.DataFrame()
+        )
 
     def trading_days(self) -> set:
         """近一年交易日集合 (供交易日探针)。失败抛 FuyaoError, 由探针兜为未知。"""
@@ -1059,10 +1110,10 @@ class FuyaoProvider:
         → None, 由调用方整轮回退单标的接口。
         """
         try:
-            lo = bounds["first_ex"].min() - timedelta(days=_PREV_CLOSE_BACKDAYS)
-            path = self._ensure_daily_big_dump(lo)
-            if path is None:
+            info = self._daily_dump_info()
+            if info is None:
                 return None
+            path = info[0]
             sources = [self._closes_scan(pl.scan_parquet(path))]
             ten = self._dump_memo.get(_DAILY10_DUMP_KIND)
             if ten is not None:
@@ -1123,7 +1174,7 @@ class FuyaoProvider:
                     df = self.get_adj_factors(
                         syms, datetime.now() - timedelta(days=365), datetime.now()
                     )
-            except FuyaoError as e:
+            except (FuyaoError, ProviderRequestError) as e:
                 return {"provider": self.name, "dataset": dataset, "rows": 0, "error": str(e)}
             head = df.head(5).to_dicts()
             for row in head:  # date/datetime → ISO 字符串, 保证 JSON 可序列化
@@ -1141,7 +1192,7 @@ class FuyaoProvider:
             syms = [s for s in (symbols or [])][:1] or ["600519.SH"]
             try:
                 df = self.get_financials("metrics", syms, latest_only=True)
-            except FuyaoError as e:
+            except (FuyaoError, ProviderRequestError) as e:
                 return {"provider": self.name, "dataset": dataset, "rows": 0, "error": str(e)}
             head = df.head(5).to_dicts()
             return {

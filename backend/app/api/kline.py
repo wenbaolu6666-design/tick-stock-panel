@@ -7,7 +7,7 @@ import logging
 import math
 from datetime import date, timedelta
 from functools import lru_cache, partial
-from typing import Optional
+from typing import Annotated, Optional
 from zoneinfo import ZoneInfo
 
 import anyio
@@ -1156,7 +1156,10 @@ def get_minute(
     symbol: str = Query(..., description="标的代码"),
     trade_date: date | None = Query(None, alias="date", description="交易日期, 默认最新"),
     live: bool = Query(False, description="当日盘中跳过本地优先, 直接实时拉取(个股详情分时轮询用)"),
-    period: str = Query("1m", description="分钟周期: 1m/5m/15m/30m/60m (多周期为 E:/a 导入的只读历史表)"),
+    period: Annotated[
+        str,
+        Query(description="分钟周期: 1m/5m/15m/30m/60m (多周期为 E:/a 导入的只读历史表)"),
+    ] = "1m",
 ):
     """读取某只股票某天的分钟 K 线。
 

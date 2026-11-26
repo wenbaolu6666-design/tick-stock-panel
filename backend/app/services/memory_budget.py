@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import psutil
 
@@ -46,7 +46,9 @@ def _memory_groups() -> list[tuple[Path, Path, bool]]:
         unified = parts[0] == "0" and not parts[1]
         if not unified and "memory" not in parts[1].split(","):
             continue
-        member = Path(_unescape(parts[2]))
+        # cgroup paths are always POSIX paths even when this module is tested or
+        # imported on Windows; only the mount point uses host-native semantics.
+        member = PurePosixPath(_unescape(parts[2]))
         if not member.is_absolute() or ".." in member.parts:
             continue
         for mount in mounts:
@@ -58,12 +60,13 @@ def _memory_groups() -> list[tuple[Path, Path, bool]]:
                 continue
             if not unified and "memory" not in filesystem[2].split(","):
                 continue
-            root, point = Path(_unescape(fields[3])), Path(_unescape(fields[4]))
+            root = PurePosixPath(_unescape(fields[3]))
+            point = Path(_unescape(fields[4]))
             try:
                 relative = member.relative_to(root)
             except ValueError:
                 continue
-            groups.append((point / relative, point, unified))
+            groups.append((point.joinpath(*relative.parts), point, unified))
     return groups
 
 

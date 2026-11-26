@@ -17,7 +17,10 @@ from app.tickflow.repository import DataStore, KlineRepository
 
 
 @pytest.fixture
-def repo(tmp_path):
+def repo(tmp_path, monkeypatch):
+    from app.services import preferences
+
+    monkeypatch.setattr(preferences, "get_daily_data_provider", lambda: "tickflow")
     return KlineRepository(DataStore(tmp_path))
 
 

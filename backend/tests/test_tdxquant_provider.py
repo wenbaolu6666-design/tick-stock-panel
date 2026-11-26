@@ -15,6 +15,7 @@ from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
+import yaml
 
 from app.plugins.tdxquant import client as tc
 from app.plugins.tdxquant import provider as tp
@@ -832,12 +833,14 @@ def test_test_dataset_unsupported_dataset():
 
 
 # ---------------------------------------------------------------- loader 集成
-def test_loader_manifest_parses_and_entry_importable():
+def test_disabled_manifest_parses_and_entry_importable():
     from importlib import import_module
 
     from app.data_providers.custom import loader
 
-    manifest = loader.plugin_manifest("tdxquant")
+    assert loader.plugin_manifest("tdxquant") is None
+    manifest_path = Path(__file__).resolve().parents[1] / "app" / "plugins" / "tdxquant" / "plugin.yaml.disabled"
+    manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
     assert manifest is not None
     assert manifest["name"] == "tdxquant"
     assert manifest["display_name"] == "TdxQuant (TdxAiData)"
@@ -854,12 +857,10 @@ def test_loader_manifest_parses_and_entry_importable():
     assert provider_cls.name == "tdxquant"
 
 
-def test_loader_probe_plugin_key_dispatch(monkeypatch):
+def test_disabled_loader_probe_plugin_key_is_unavailable():
     from app.data_providers.custom import loader
 
-    monkeypatch.setattr(tp, "probe_api_key", lambda key: (key == "good", "ok" if key == "good" else "bad"))
-    assert loader.probe_plugin_key("tdxquant", "good") == (True, "ok")
-    assert loader.probe_plugin_key("tdxquant", "bad") == (False, "bad")
+    assert loader.probe_plugin_key("tdxquant", "good") == (False, "插件 'tdxquant' 不存在")
 
 
 def test_close_resets_client():

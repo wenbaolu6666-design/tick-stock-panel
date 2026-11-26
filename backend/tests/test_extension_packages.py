@@ -154,6 +154,8 @@ def test_digest_revision_version_and_compatibility_guards(tmp_path):
 
 @pytest.mark.parametrize("name", ["../escape.py", "/tmp/evil.py", "a\\evil.py", "a/../x.py", "CON.py", "x.dll", "backend/extension.py/child.py"])
 def test_invalid_archive_paths_and_payloads_are_rejected(tmp_path, name):
+    if "\\" in name and os.name == "nt":
+        pytest.skip("Windows zipfile normalizes backslashes to safe forward slashes")
     with pytest.raises(ValueError):
         ExtensionPackageStore(tmp_path).inspect(bundle(extra={name: "pass"}))
 

@@ -58,11 +58,6 @@ def _sync_engine(request: Request) -> None:
                 for meta in strategy_engine.list_strategies(include_research=True)
             }
             monitor_rules.disable_missing_strategy_rules(_data_dir(request), available)
-        sector_service = getattr(request.app.state, "sector_monitor_service", None)
-        if sector_service is not None:
-            monitor_rules.disable_missing_sector_rules(
-                _data_dir(request), sector_service.missing_target_keys,
-            )
         rules = [
             _reconcile_index_asset_type(r, repo)
             for r in monitor_rules.load_all(_data_dir(request))

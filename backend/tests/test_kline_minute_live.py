@@ -42,7 +42,9 @@ class _FakeRepo:
     def get_daily_asset(self, asset_type, symbol, start, end, columns=None):
         return pl.DataFrame({"date": [], "close": []})
 
-    def get_minute(self, symbol, trade_date, asset_type="stock") -> pl.DataFrame:
+    def get_minute(
+        self, symbol, trade_date, asset_type="stock", period="1m",
+    ) -> pl.DataFrame:
         return pl.DataFrame({
             "datetime": [
                 datetime(2026, 8, 26, 9, 30 + offset // 60, offset % 60)

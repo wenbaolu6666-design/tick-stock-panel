@@ -135,12 +135,16 @@ class _FakeRepo:
     def get_daily_asset(self, asset_type, symbol, start, end, columns=None) -> pl.DataFrame:
         return pl.DataFrame({"date": [], "close": []})
 
-    def get_minute(self, symbol, trade_date, asset_type="stock") -> pl.DataFrame:
+    def get_minute(
+        self, symbol, trade_date, asset_type="stock", period="1m",
+    ) -> pl.DataFrame:
         if trade_date == LAST_SESSION:
             return _session(LAST_SESSION).drop("symbol")
         return pl.DataFrame()
 
-    def latest_minute_date(self, symbol, asset_type="stock") -> date:
+    def latest_minute_date(
+        self, symbol, asset_type="stock", period="1m",
+    ) -> date:
         return LAST_SESSION
 
     def latest_daily_date(self) -> date:

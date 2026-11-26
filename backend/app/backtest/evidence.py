@@ -11,6 +11,7 @@ import json
 import os
 import re
 import sys
+import time
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -292,10 +293,10 @@ def _manifest_path(data_dir: Path, run_id: str) -> Path:
     if not _RUN_ID.fullmatch(run_id):
         raise ValueError("回测编号无效")
     root = Path(data_dir).resolve()
-    path = root / "backtest_runs" / f"{run_id}.json"
-    if path.resolve() != path:
+    runs_dir = root / "backtest_runs"
+    if runs_dir.resolve() != runs_dir:
         raise ValueError("回测记录目录无效")
-    return path
+    return runs_dir / f"{run_id}.json"
 
 
 def save_evidence(data_dir: Path, evidence: dict) -> None:
@@ -308,7 +309,15 @@ def save_evidence(data_dir: Path, evidence: dict) -> None:
         raise ValueError("回测版本记录超过大小限制")
     # 先占用同编号写锁，防止两个 worker 的检查与原子替换之间发生覆盖。
     lock_path = path.with_suffix(".lock")
-    descriptor = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    try:
+        descriptor = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except PermissionError as exc:
+        # Windows reports O_EXCL contention as access denied rather than EEXIST.
+        for _ in range(20):
+            if lock_path.exists() or path.exists():
+                raise FileExistsError("回测版本记录正在写入") from exc
+            time.sleep(0.001)
+        raise
     os.close(descriptor)
     try:
         if path.exists():

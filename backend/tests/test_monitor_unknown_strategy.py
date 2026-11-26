@@ -48,33 +48,3 @@ def test_list_rules_marks_missing_strategy_for_action(tmp_path):
     rule = next(r for r in listed["rules"] if r["id"] == "missing")
 
     assert "关联策略已不存在" in rule["runtime_warning"]
-
-def _sector_rule(rule_id: str, keys: list[str]) -> dict:
-    return monitor_rules.normalize({
-        "id": rule_id,
-        "name": rule_id,
-        "type": "sector",
-        "scope": "sector",
-        "sector_kind": "industry",
-        "sector_targets": [
-            {"key": key, "kind": "industry", "name": key, "available": True}
-            for key in keys
-        ],
-        "conditions": [],
-        "enabled": True,
-    })
-
-
-def test_disable_missing_sector_rules_only_when_all_targets_are_gone(tmp_path):
-    monitor_rules.save_one(tmp_path, _sector_rule("all_gone", ["old:a", "old:b"]))
-    monitor_rules.save_one(tmp_path, _sector_rule("partial", ["old:a", "live:c"]))
-
-    changed = monitor_rules.disable_missing_sector_rules(
-        tmp_path,
-        lambda targets: [str(t["key"]) for t in targets if str(t["key"]).startswith("old:")],
-    )
-
-    assert [r["id"] for r in changed] == ["all_gone"]
-    saved = {r["id"]: r for r in monitor_rules.load_all(tmp_path)}
-    assert saved["all_gone"]["enabled"] is False
-    assert saved["partial"]["enabled"] is True

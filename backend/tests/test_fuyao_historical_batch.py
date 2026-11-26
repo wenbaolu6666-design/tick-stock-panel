@@ -134,25 +134,28 @@ def test_client_batch_network_failure_is_explicit(monkeypatch):
         client.close()
 
 
-@pytest.mark.parametrize("failure", ["wrong_adjust", "malformed", "not_found"])
-def test_provider_falls_back_from_rejected_http_batch_without_changing_price(monkeypatch, failure):
+def test_provider_recent_window_probes_dump_then_uses_raw_single_api(monkeypatch):
     def respond(request):
-        if request.url.path.endswith("historical-batch"):
-            if failure == "not_found":
-                return httpx.Response(404, json={})
-            groups = [_group("000001.SZ", [{"date_ms": START}])] if failure == "malformed" else [_group("000001.SZ")]
-            return httpx.Response(200, json=_payload(groups, adjust="forward" if failure == "wrong_adjust" else "none"))
+        if request.url.path.endswith("/download-url"):
+            return httpx.Response(404, json={})
         return httpx.Response(200, json={"code": 0, "data": {"item": [_bar()]}})
 
     client, calls = _http_client(monkeypatch, respond)
+    provider = _provider(monkeypatch, client)
+    provider._daily_dump_info = lambda: None
     try:
-        result = _provider(monkeypatch, client).get_daily(["000001.SZ"], datetime(2026, 11, 6), datetime(2026, 11, 6))
+        result = provider.get_daily(
+            ["000001.SZ"], datetime(2026, 11, 6), datetime(2026, 11, 6)
+        )
     finally:
         client.close()
     assert result["close"].to_list() == [11.63]
     assert result["volume"].to_list() == [16126.0]
-    assert [r.url.path for r in calls] == ["/api/a-share/prices/historical-batch", "/api/a-share/prices/historical"]
-    assert all(r.url.params["adjust"] == "none" for r in calls)
+    assert [r.url.path for r in calls] == [
+        "/api/dump/market-dumps/daily-k-10d/download-url",
+        "/api/a-share/prices/historical",
+    ]
+    assert calls[-1].url.params["adjust"] == "none"
 
 
 class _BatchClient:
@@ -178,6 +181,9 @@ class _BatchClient:
             raise fc.FuyaoError("旧接口无权限")
         return [b for b in self.bars.get(symbol, []) if start_ms <= b["date_ms"] <= end_ms]
 
+    def dump_download_url(self, dump_kind):
+        raise fc.FuyaoError("测试环境无 dump")
+
 
 def _provider(monkeypatch, client):
     provider = fp.FuyaoProvider()
@@ -187,15 +193,15 @@ def _provider(monkeypatch, client):
 
 
 def _no_dump(*args):
-    raise AssertionError("少量标的不得触发整包下载")
+    raise fc.FuyaoError("测试环境无 dump")
 
 
-def test_small_query_prefers_batch_and_preserves_raw_price_units_and_date(monkeypatch):
+def test_small_query_uses_single_api_and_preserves_raw_price_units_and_date(monkeypatch):
     bars = {"000001.SZ": [_bar(close=11.63)], "600519.SH": [_bar(close=1480.12)]}
     client = _BatchClient(bars)
     provider = _provider(monkeypatch, client)
-    provider._daily10_for_window = _no_dump
-    provider._daily_dump_info = _no_dump
+    provider._ensure_dump = _no_dump  # type: ignore[assignment]
+    provider._daily_dump_info = lambda: None
     progress = []
     df = provider.get_daily(list(bars), datetime(2026, 11, 6), datetime(2026, 11, 6),
                             on_chunk_done=lambda cur, total: progress.append((cur, total)))
@@ -205,52 +211,63 @@ def test_small_query_prefers_batch_and_preserves_raw_price_units_and_date(monkey
     assert df["volume"].to_list() == [16126.0, 16126.0]
     assert df["amount"].to_list() == [18754665.93, 18754665.93]
     assert df["date"].to_list() == [DAY, DAY]
-    assert client.single_calls == []
-    assert client.batch_calls == [(list(bars), START, START)]
+    assert client.single_calls == [
+        (symbol, START, START, "none") for symbol in bars
+    ]
+    assert client.batch_calls == []
     assert progress == [(1, 1)]
 
 
 def test_duplicate_symbols_are_fetched_and_emitted_once(monkeypatch):
     client = _BatchClient({"000001.SZ": [_bar()], "600519.SH": [_bar()]})
     provider = _provider(monkeypatch, client)
+    provider._ensure_dump = _no_dump  # type: ignore[assignment]
+    provider._daily_dump_info = lambda: None
     df = provider.get_daily(["600519.SH", "000001.SZ", "600519.SH"], datetime(2026, 11, 6), datetime(2026, 11, 6))
-    assert client.batch_calls[0][0] == ["600519.SH", "000001.SZ"]
+    assert [call[0] for call in client.single_calls] == ["600519.SH", "000001.SZ"]
+    assert client.batch_calls == []
     assert df.height == 2
 
 
 @pytest.mark.parametrize("count", [10, 11, 51])
-def test_api_fallback_is_batched_and_frames_remain_bounded(monkeypatch, count):
+def test_api_fallback_is_chunked_and_frames_remain_bounded(monkeypatch, count):
     symbols = [f"{i + 1:06d}.SZ" for i in range(count)]
     client = _BatchClient({symbol: [_bar()] for symbol in symbols})
     provider = _provider(monkeypatch, client)
+    provider._ensure_dump = _no_dump  # type: ignore[assignment]
     provider._daily_dump_info = lambda: None
     progress = []
     frames = list(provider.iter_daily(symbols, datetime(2026, 10, 1), datetime(2026, 11, 6),
                                      on_chunk_done=lambda cur, total: progress.append((cur, total))))
-    assert max(len(call[0]) for call in client.batch_calls) <= 10
-    assert list(itertools.chain.from_iterable(call[0] for call in client.batch_calls)) == symbols
+    assert [call[0] for call in client.single_calls] == symbols
+    assert client.batch_calls == []
     assert max(frame.height for frame in frames) <= fp._HIST_SYMBOL_BATCH
     assert sum(frame.height for frame in frames) == count
     assert progress[-1] == (len(frames), len(frames))
-    assert client.single_calls == []
 
 
-@pytest.mark.parametrize("batch_error", [False, True])
-def test_batch_missing_groups_or_failure_use_old_endpoint_only_when_needed(monkeypatch, batch_error):
-    client = _BatchClient({"000001.SZ": [_bar()], "600519.SH": [_bar(close=1480.12)]},
-                          missing=["600519.SH"], batch_error=batch_error)
-    df = _provider(monkeypatch, client).get_daily(
-        ["000001.SZ", "600519.SH"], datetime(2026, 11, 6), datetime(2026, 11, 6))
+def test_single_api_queries_each_symbol_and_keeps_empty_series(monkeypatch):
+    client = _BatchClient({"000001.SZ": [_bar()], "600519.SH": [_bar(close=1480.12)]})
+    provider = _provider(monkeypatch, client)
+    provider._ensure_dump = _no_dump  # type: ignore[assignment]
+    provider._daily_dump_info = lambda: None
+    df = provider.get_daily(
+        ["000001.SZ", "600519.SH"], datetime(2026, 11, 6), datetime(2026, 11, 6)
+    )
     assert df.height == 2
-    assert [c[0] for c in client.single_calls] == (["000001.SZ", "600519.SH"] if batch_error else ["600519.SH"])
+    assert [c[0] for c in client.single_calls] == ["000001.SZ", "600519.SH"]
+    assert client.batch_calls == []
     assert all(c[3] == "none" for c in client.single_calls)
 
-
-def test_valid_empty_group_does_not_trigger_fallback(monkeypatch):
-    client = _BatchClient({"000001.SZ": []})
-    result = _provider(monkeypatch, client).get_daily(["000001.SZ"], datetime(2026, 11, 6), datetime(2026, 11, 6))
+    empty = _BatchClient({"000001.SZ": []})
+    empty_provider = _provider(monkeypatch, empty)
+    empty_provider._ensure_dump = _no_dump  # type: ignore[assignment]
+    empty_provider._daily_dump_info = lambda: None
+    result = empty_provider.get_daily(
+        ["000001.SZ"], datetime(2026, 11, 6), datetime(2026, 11, 6)
+    )
     assert result.is_empty()
-    assert client.single_calls == []
+    assert [c[0] for c in empty.single_calls] == ["000001.SZ"]
 
 
 def test_settings_daily_preview_surfaces_terminal_fallback_error(monkeypatch):
@@ -261,13 +278,15 @@ def test_settings_daily_preview_surfaces_terminal_fallback_error(monkeypatch):
     assert "旧接口无权限" in result["error"]
 
 
-def test_deep_batch_window_splits_without_overlap_or_duplicate_days(monkeypatch):
+def test_deep_single_api_window_splits_without_overlap_or_duplicate_days(monkeypatch):
     client = _BatchClient({"000001.SZ": [_bar(date(2001, 1, 1)), _bar()]})
     provider = _provider(monkeypatch, client)
+    provider._ensure_dump = _no_dump  # type: ignore[assignment]
+    provider._daily_dump_info = lambda: None
     df = provider.get_daily(["000001.SZ"], datetime(2001, 1, 1), datetime(2026, 11, 6))
-    assert len(client.batch_calls) == 3
-    assert all(end - start < fp._HIST_MAX_SPAN_MS for _, start, end in client.batch_calls)
-    assert all(a[2] + 1 == b[1] for a, b in itertools.pairwise(client.batch_calls))
+    assert len(client.single_calls) == 3
+    assert all(end - start < fp._HIST_MAX_SPAN_MS for _, start, end, _ in client.single_calls)
+    assert all(a[2] + 1 == b[1] for a, b in itertools.pairwise(client.single_calls))
     assert df["date"].to_list() == [date(2001, 1, 1), DAY]
 
 
@@ -275,8 +294,6 @@ def test_deep_batch_window_splits_without_overlap_or_duplicate_days(monkeypatch)
 def test_non_stock_daily_routing_is_unchanged(monkeypatch, asset_type):
     client = _BatchClient({})
     provider = _provider(monkeypatch, client)
-    provider._daily10_for_window = _no_dump
-    provider._daily_dump_info = _no_dump
     assert provider.get_daily(["000001.SH"], None, None, asset_type=asset_type).is_empty()
     assert client.batch_calls == client.single_calls == []
 
@@ -287,7 +304,7 @@ def test_bulk_recent_query_keeps_dump_route(monkeypatch):
     provider = _provider(monkeypatch, client)
     dump = pl.DataFrame([{"thscode": s, "adjusted": "none", **_bar()} for s in symbols])
     provider._daily10_for_window = lambda *_: dump
-    provider._daily_dump_info = _no_dump
+    provider._daily_dump_info = lambda: None
     result = provider.get_daily(symbols, datetime(2026, 11, 6), datetime(2026, 11, 6))
     assert result.height == len(symbols)
     assert client.batch_calls == client.single_calls == []
@@ -297,6 +314,7 @@ def test_terminal_fallback_failure_rolls_back_staging_and_keeps_existing_data(mo
     symbols = [f"{i + 1:06d}.SZ" for i in range(51)]
     client = _BatchClient({symbol: [_bar()] for symbol in symbols}, missing=[symbols[-1]], errors=[symbols[-1]])
     provider = _provider(monkeypatch, client)
+    provider._ensure_dump = _no_dump  # type: ignore[assignment]
     provider._daily_dump_info = lambda: None
     monkeypatch.setattr(kline_sync.preferences, "get_daily_data_provider", lambda: "fuyao")
     from app.data_providers import custom
@@ -310,19 +328,17 @@ def test_terminal_fallback_failure_rolls_back_staging_and_keeps_existing_data(mo
     with pytest.raises(ProviderRequestError, match=symbols[-1]):
         kline_sync.sync_and_persist_daily_batch(symbols, repo, object(),
                                                start_date=datetime(2026, 10, 1), end_date=datetime(2026, 11, 6))
-    assert len(client.batch_calls) == 6
+    assert len(client.single_calls) == 51
+    assert client.batch_calls == []
     assert target.read_bytes() == before
     assert not (tmp_path / ".daily_sync_staging").exists()
 
 
 def _unknown_symbol_response(request):
     unknown = "000004.SZ"
-    if request.url.path.endswith("historical-batch"):
-        symbols = request.url.params["thscodes"].split(",")
-        if unknown not in symbols:
-            bar = {**_bar(), "date_ms": int(request.url.params["start"])}
-            return httpx.Response(200, json=_payload([_group(symbol, [bar]) for symbol in symbols]))
-    elif request.url.params["thscode"] != unknown:
+    if "/api/dump/" in request.url.path:
+        return httpx.Response(404, json={})
+    if request.url.path.endswith("/historical") and request.url.params["thscode"] != unknown:
         bar = {**_bar(), "date_ms": int(request.url.params["start"])}
         return httpx.Response(200, json={"code": 0, "data": {"item": [bar]}})
     return httpx.Response(200, json={"code": 1002, "message": f"Unknown thscode: {unknown}"})
@@ -340,7 +356,8 @@ def test_unknown_symbol_does_not_discard_other_stocks(monkeypatch, caplog):
     assert df["close"].to_list() == [11.63]
     assert df["volume"].to_list() == [16126.0]
     assert "000004.SZ" in caplog.text and "未覆盖" in caplog.text
-    assert len(calls) == 3  # 整批拒绝后仅在源内单票兜底,不跨数据源。
+    api_calls = [r for r in calls if r.url.path.endswith("/historical")]
+    assert len(api_calls) == 2  # 未覆盖标的跳过, 不连坐同一批次中的其他股票。
 
 
 def test_unknown_symbol_is_not_retried_in_later_history_windows(monkeypatch):
@@ -352,10 +369,11 @@ def test_unknown_symbol_is_not_retried_in_later_history_windows(monkeypatch):
     finally:
         client.close()
     assert set(df["symbol"]) == {"000001.SZ"}
-    unknown_calls = [r for r in calls if r.url.params.get("thscode") == "000004.SZ"]
-    batches = [r for r in calls if r.url.path.endswith("historical-batch")]
-    assert len(unknown_calls) == 1 and len(batches) > 1
-    assert all(r.url.params["thscodes"] == "000001.SZ" for r in batches[1:])
+    api_calls = [r for r in calls if r.url.path.endswith("/historical")]
+    unknown_calls = [r for r in api_calls if r.url.params.get("thscode") == "000004.SZ"]
+    known_calls = [r for r in api_calls if r.url.params.get("thscode") == "000001.SZ"]
+    assert len(unknown_calls) == 1
+    assert len(known_calls) == 4  # 1990–2026 共四个 10 年窗口; 未知标的后续窗口不重试
 
 
 @pytest.mark.parametrize(("code", "message"), [

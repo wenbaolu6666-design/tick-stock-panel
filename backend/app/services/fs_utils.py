@@ -21,7 +21,9 @@ def atomic_write_text(path: Path, text: str, *, mode: int | None = None) -> None
     只读位, 失败不该让写入失败, 所以吞掉 OSError, 与原调用处的处理一致。
     """
     tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(text, encoding="utf-8")
+    # Payloads copied from archives may already contain CRLF. Preserve their
+    # bytes instead of letting Windows translate each LF a second time.
+    tmp.write_text(text, encoding="utf-8", newline="")
     if mode is not None:
         try:
             os.chmod(tmp, mode)

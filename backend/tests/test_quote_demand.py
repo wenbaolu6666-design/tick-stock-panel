@@ -14,6 +14,7 @@ def market(monkeypatch, tmp_path):
         {"symbol": "000985.SH"}, {"symbol": "159558.SZ"}, {"symbol": "600519.SH"},
     ])
     monkeypatch.setattr(preferences, "get_realtime_data_provider", lambda: "tickflow")
+    monkeypatch.setattr(preferences, "load", lambda: {"realtime_data_provider": "tickflow"})
     monkeypatch.setattr(preferences, "get_realtime_pull_stock", lambda: True)
     monkeypatch.setattr(preferences, "get_realtime_pull_etf", lambda: False)
     repo = SimpleNamespace(

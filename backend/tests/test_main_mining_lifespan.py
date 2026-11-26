@@ -161,7 +161,15 @@ def test_application_only_recovers_runs_when_it_owns_lock(tmp_path, monkeypatch,
         raise StopAfterManagerInitializationError
 
     monkeypatch.setattr(main_module, "DataStore", lambda: SimpleNamespace(data_dir=tmp_path))
-    monkeypatch.setattr(main_module, "KlineRepository", lambda _: SimpleNamespace(refresh_cache=stop))
+    monkeypatch.setattr(
+        main_module,
+        "KlineRepository",
+        lambda _: SimpleNamespace(refresh_cache=stop, enriched_ready=False),
+    )
+    monkeypatch.setattr(
+        "app.services.sector_monitor.SectorMonitorService",
+        lambda _: (_ for _ in ()).throw(StopAfterManagerInitializationError()),
+    )
     monkeypatch.setattr(main_module.settings, "backtest_matrix_disk_cache_enabled", False)
     monkeypatch.setattr("app.services.auth.bootstrap_from_env", lambda: None)
     monkeypatch.setattr("app.strategy.custom_signals.seed_if_empty", lambda _: 0)

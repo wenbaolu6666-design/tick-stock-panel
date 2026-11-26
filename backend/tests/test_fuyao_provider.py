@@ -635,7 +635,6 @@ def _hist_provider(monkeypatch, fake: _FakeHistClient, allow_dumps: bool = False
     monkeypatch.setattr(fp, "fuyao_client", type("M", (), {"FuyaoClient": lambda **kw: fake}))
     monkeypatch.setattr(fp, "get_api_key", lambda: "test-key")
     monkeypatch.setattr(fp, "_HIST_INTERVAL_S", 0.0)
-    monkeypatch.setattr(fp, "_HIST_SMALL_SYMBOL_LIMIT", 0)
     if not allow_dumps:
         # API 路径测试必须与开发机真实 dump 缓存隔离; dump 测试显式传 allow_dumps=True。
         p._ensure_daily_big_dump = lambda start_d: None  # type: ignore[assignment]
@@ -1142,11 +1141,8 @@ def test_tail_ok_weekend_tolerance():
 
 # ---- adj_factor: 推导 ----
 
-# get_adj_factors 输出契约: 规范三列 + 事件明细列 (等差显示/全精度链重建用)
-_ADJ_OUT_COLS = [
-    "symbol", "trade_date", "ex_factor",
-    "dividend", "bonus", "allot", "allot_price", "prev_close",
-]
+# get_adj_factors 输出契约: 当前本地实现只输出规范三列。
+_ADJ_OUT_COLS = ["symbol", "trade_date", "ex_factor"]
 
 
 def test_adj_dividend_factor_derivation(monkeypatch):
@@ -1161,18 +1157,14 @@ def test_adj_dividend_factor_derivation(monkeypatch):
     assert row["ex_factor"] == pytest.approx(32.8 / 32.12)
 
 
-def test_adj_output_keeps_event_details(monkeypatch):
-    """扩表: 输出保留事件明细 (每股分红/送转/配股/前收盘), 供等差显示与全精度链重建。"""
+def test_adj_output_stays_on_canonical_schema(monkeypatch):
+    """本地契约只输出 symbol/trade_date/ex_factor, 不扩展事件明细列。"""
     events = [("600519.SH", date(2026, 6, 12), 0.68, 0.0, 0.0, 0.0)]
     bars = {"600519.SH": [_bar(date(2026, 6, 11), 32.8), _bar(date(2026, 6, 12), 32.0)]}
     provider = _adj_provider(monkeypatch, events, bars)
     df = provider.get_adj_factors(["600519.SH"], datetime(2026, 1, 1), datetime(2026, 12, 31))
     row = df.row(0, named=True)
-    assert row["dividend"] == pytest.approx(0.68)
-    assert row["bonus"] == 0.0
-    assert row["allot"] == 0.0
-    assert row["allot_price"] == 0.0
-    assert row["prev_close"] == pytest.approx(32.8)
+    assert set(row) == set(_ADJ_OUT_COLS)
 
 
 def test_adj_bonus_and_allotment_formula(monkeypatch):

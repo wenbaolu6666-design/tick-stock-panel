@@ -86,16 +86,25 @@ class _DetailRepo:
         )
         return frame.select(columns) if columns else frame
 
-    def get_minute(self, symbol, trade_date, asset_type="stock") -> pl.DataFrame:
+    def get_minute(
+        self, symbol, trade_date, asset_type="stock", period="1m",
+    ) -> pl.DataFrame:
         return self.minute
 
-    def get_minute_range(self, symbols, start, end, asset_type="stock") -> pl.DataFrame:
+    def get_minute_range(
+        self, symbols, start, end, asset_type="stock", period="1m",
+    ) -> pl.DataFrame:
         return self.minute
 
 
 class _IndexRepo:
     def get_index_instruments(self) -> pl.DataFrame:
         return pl.DataFrame({"symbol": ["000001.SH"], "name": ["上证指数"]})
+
+    def get_minute(
+        self, symbol, trade_date, asset_type="index", period="1m",
+    ) -> pl.DataFrame:
+        return pl.DataFrame()
 
 
 def _client(repo, capset: CapabilitySet | None = None) -> TestClient:

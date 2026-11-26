@@ -888,6 +888,12 @@ def _run_all_progressive(
                     payload["warnings"] = w
             all_results[sid] = payload
             elapsed_map[sid] = (time.perf_counter() - t0) * 1000
+            # Persist timing before publishing the result. Pollers treat a cached
+            # result as complete and may immediately inspect the ordering file.
+            try:
+                strategy_run_queue.record_run_timings(data_dir, {sid: elapsed_map[sid]})
+            except Exception:  # noqa: BLE001 -- timing is advisory, never block a result
+                logger.warning("run_all 记录策略耗时失败: %s", sid, exc_info=True)
             # 逐策略增量落盘 (write_cache 同日按 sid 合并), 前端轮询即可逐个看到。
             # 分钟结果不落盘 (strategy_cache 为日线语义), 改经 handle 快照合入 summary
             if timeframe == "1d":

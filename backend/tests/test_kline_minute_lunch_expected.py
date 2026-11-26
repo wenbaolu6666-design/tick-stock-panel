@@ -86,7 +86,9 @@ class _FakeRepo:
     def get_daily_asset(self, asset_type, symbol, start, end, columns=None) -> pl.DataFrame:
         return pl.DataFrame({"date": [], "close": []})
 
-    def get_minute(self, symbol, trade_date, asset_type="stock") -> pl.DataFrame:
+    def get_minute(
+        self, symbol, trade_date, asset_type="stock", period="1m",
+    ) -> pl.DataFrame:
         if trade_date == TODAY:
             return _morning(bars=self._bars).drop("symbol")
         return pl.DataFrame()

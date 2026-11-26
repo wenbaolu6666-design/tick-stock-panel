@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import stat
 import zipfile
 from pathlib import Path
@@ -332,6 +333,8 @@ def test_plain_zip_can_supply_dependencies_for_separately_uploaded_strategy(env,
 
 @pytest.mark.parametrize("name", ["../策略.py", "/策略.py", "包/../策略.py", "包\\策略.py"])
 def test_plain_zip_rejects_unsafe_paths(env, name):
+    if "\\" in name and os.name == "nt":
+        pytest.skip("Windows zipfile normalizes backslashes to safe forward slashes")
     with pytest.raises(resource_bundle.ResourceBundleError, match=r"路径|条目"):
         inspect(loose_zip({name: strategy("custom_a").encode()}))
 

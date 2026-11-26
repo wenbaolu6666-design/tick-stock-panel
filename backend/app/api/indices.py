@@ -5,7 +5,7 @@ import logging
 import threading
 import time
 from datetime import date, datetime, timedelta
-from typing import Optional
+from typing import Annotated, Optional
 
 import polars as pl
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -80,7 +80,10 @@ def get_index_minute(
     request: Request,
     symbol: str = Query(..., description="指数代码, 如 000001.SH"),
     trade_date: date | None = Query(None, alias="date", description="交易日期, 休市时默认最近本地指数交易日"),
-    period: str = Query("1m", description="分钟周期: 1m/5m/15m/30m/60m"),
+    period: Annotated[
+        str,
+        Query(description="分钟周期: 1m/5m/15m/30m/60m"),
+    ] = "1m",
 ):
     """实时读取指数分钟 K。不写入股票分钟 parquet。
 

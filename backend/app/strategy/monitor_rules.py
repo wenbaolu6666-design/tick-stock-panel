@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import math
 import re
-from collections.abc import Callable
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -393,33 +392,6 @@ STRATEGY_RULE_PREFIX = "mr_strategy_"
 def strategy_rule_id(strategy_id: str) -> str:
     """策略监控规则 id = mr_strategy_{strategy_id}。"""
     return f"{STRATEGY_RULE_PREFIX}{strategy_id}"
-
-
-def disable_missing_sector_rules(
-    data_dir: Path,
-    missing_target_keys: Callable[[list[dict]], list[str]],
-) -> list[dict]:
-    """停用全部监控目标均已失效的板块规则，返回变更规则。
-
-    板块字段目录会随扩展数据源重建而变 key；只要规则保存的目标全部消失，
-    规则就不可能产生有效快照。保留规则供用户查看/重选，但先停用避免假运行。
-    部分目标失效时保持启用，由列表返回 runtime_warning。
-    """
-    changed: list[dict] = []
-    for rule in load_all(data_dir):
-        if rule.get("type") != "sector" or rule.get("enabled") is False:
-            continue
-        targets = list(rule.get("sector_targets") or [])
-        if not targets:
-            continue
-        missing = missing_target_keys(targets)
-        if len(set(missing)) < len(targets):
-            continue
-        updated = dict(rule)
-        updated["enabled"] = False
-        save_one(data_dir, updated)
-        changed.append(updated)
-    return changed
 
 
 def disable_missing_strategy_rules(data_dir: Path, available_ids: set[str] | list[str]) -> list[dict]:

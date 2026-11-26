@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import threading
 import uuid
-from datetime import date, timedelta
+from datetime import date
 from functools import lru_cache
 from pathlib import Path
 
@@ -179,14 +179,10 @@ def assert_usable(
     enriched_only: bool = False,
 ) -> None:
     end = end or date.max
-    today = date.today()
-    stale_before = (today - timedelta(days=30)).isoformat()
     for entry in snapshot(root)["entries"]:
-        # 仅待重算(原始日K已校验)不应阻断看板/矩阵读取。
-        if not entry.get("needs_raw", True):
-            continue
-        # 30 天以前的历史脏数据不应阻断当前看板; 仍保留在自检报告中供手动修复。
-        if entry["day"] < stale_before:
+        # 原始日K未修复, 或其依赖指标尚未完成重算, 都必须 fail-closed。
+        # 不能因问题日期较旧或 needs_raw 已清除而放行历史依赖链。
+        if not entry.get("needs_raw", True) and not entry.get("needs_enriched", True):
             continue
         dependency = entry["asset_type"] == "index" and asset_type in {"stock", "etf"}
         if ((entry["asset_type"] == asset_type or dependency) and entry["day"] <= end.isoformat()

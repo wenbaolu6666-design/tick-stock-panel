@@ -31,18 +31,22 @@ def test_spec_carries_strategy_prompts_as_files():
     assert '(str(ROOT / "backend" / "app" / "strategy" / "prompts"), "app/strategy/prompts")' in SPEC_CODE
 
 
-def test_spec_declares_builtin_plugin_fuyao():
-    """fuyao 插件双声明不被回归 (同类动态发现问题, 见 spec 内注释)。"""
-    assert "app.plugins.fuyao.provider" in SPEC_CODE
-    assert "app/plugins/fuyao" in SPEC_CODE
+def test_spec_dynamically_declares_active_builtin_plugins():
+    """所有带 plugin.yaml 的内置插件必须由 spec 同时收集清单与动态入口。"""
+    assert (REPO_ROOT / "backend" / "app" / "plugins" / "fuyao" / "plugin.yaml").is_file()
+    assert "for _pdir in sorted(_plugins_root.iterdir())" in SPEC_CODE
+    assert 'datas += [(str(_manifest), f"app/plugins/{_pdir.name}")]' in SPEC_CODE
+    assert 'hiddenimports += [f"app.plugins.{_pdir.name}.provider"]' in SPEC_CODE
 
 
-def test_spec_declares_builtin_plugin_tdx():
-    """tdx 插件双声明不被回归 (与 fuyao 同一处理方式; probe 子进程入口也要可导入)。"""
-    assert "app.plugins.tdxquant.provider" in SPEC_CODE
-    assert "app.plugins.tdxquant.client" in SPEC_CODE
-    assert "app.plugins.tdxquant.probe" in SPEC_CODE
-    assert '"plugins" / "tdxquant" / "plugin.yaml"' in SPEC_CODE  # 源路径必须指向现存目录
+def test_spec_excludes_disabled_tdxquant_plugin():
+    """tdxquant 已通过 plugin.yaml.disabled 下线，不能重新被动态收集进桌面包。"""
+    assert "tdxquant 已通过 plugin.yaml.disabled 下线, 不打包" in SPEC_TEXT
+    assert "app.plugins.tdxquant.provider" not in SPEC_CODE
+    assert "app.plugins.tdxquant.client" not in SPEC_CODE
+    assert "app.plugins.tdxquant.probe" not in SPEC_CODE
+    assert '"plugins" / "tdxquant" / "plugin.yaml"' not in SPEC_CODE
+    assert "for _pdir in sorted(_plugins_root.iterdir())" in SPEC_CODE
 
 
 def test_installer_launches_desktop_only_once():

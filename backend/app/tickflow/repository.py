@@ -2386,7 +2386,7 @@ class KlineRepository:
             raise ValueError("无法确认待清理记录为非交易记录, 原数据保持不变")
         base = pl.DataFrame()
         if symbols is not None and paths:
-            base = pl.concat([pl.read_parquet(p) for p in paths], how="diagonal_relaxed")
+            base = pl.concat([pl.read_parquet(p, memory_map=False) for p in paths], how="diagonal_relaxed")
             base = base.filter(~pl.col("symbol").is_in(symbols))
         merged = pl.concat([base, incoming], how="diagonal_relaxed").unique(
             subset=["symbol", "date"], keep="last",
@@ -2473,7 +2473,7 @@ class KlineRepository:
             for path in paths:
                 self._validate_repair_path(path)
                 try:
-                    symbols.update(pl.read_parquet(path, columns=["symbol"])["symbol"].drop_nulls().to_list())
+                    symbols.update(pl.read_parquet(path, columns=["symbol"], memory_map=False)["symbol"].drop_nulls().to_list())
                 except (OSError, pl.exceptions.PolarsError):
                     complete = False
             return symbols, complete
@@ -2533,7 +2533,7 @@ class KlineRepository:
             for path in paths:
                 self._validate_repair_path(path)
             fingerprints = {p: self._partition_fingerprint(p) for p in paths}
-            existing = (pl.concat([pl.read_parquet(p) for p in paths], how="diagonal_relaxed")
+            existing = (pl.concat([pl.read_parquet(p, memory_map=False) for p in paths], how="diagonal_relaxed")
                         if paths else pl.DataFrame())
             keep = existing.filter(~pl.col("symbol").is_in(symbols)) if not existing.is_empty() else existing
             incoming = frame.filter(pl.col("date") == day) if not frame.is_empty() else frame

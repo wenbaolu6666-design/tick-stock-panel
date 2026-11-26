@@ -495,6 +495,14 @@ async def _application_lifespan(app: FastAPI):
                 "monitor engine: 已停用 %d 条引用不存在策略的规则: %s",
                 len(disabled), [r.get("strategy_id") for r in disabled],
             )
+        disabled_sectors = mr_store.disable_missing_sector_rules(
+            store.data_dir, sector_monitor_service.missing_target_keys,
+        )
+        if disabled_sectors:
+            logger.warning(
+                "monitor engine: 已停用 %d 条监控目标全部失效的板块规则: %s",
+                len(disabled_sectors), [r.get("id") for r in disabled_sectors],
+            )
         rules = mr_store.load_all(store.data_dir)
         monitor_engine.set_rules(rules)
         logger.info("monitor engine loaded: %d rules", monitor_engine.rule_count)

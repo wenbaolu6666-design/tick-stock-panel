@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from datetime import date as _date
 from pathlib import Path
 
 import polars as pl

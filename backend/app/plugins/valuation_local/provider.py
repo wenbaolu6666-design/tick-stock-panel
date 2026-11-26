@@ -11,6 +11,7 @@ from __future__ import annotations
 import glob
 import logging
 import os
+from pathlib import Path
 
 import polars as pl
 
@@ -20,7 +21,6 @@ _DATASETS = ("valuation_history",)
 
 
 def _root() -> Path:
-    from pathlib import Path
     from app.config import settings
 
     return settings.data_dir / "valuation_history"

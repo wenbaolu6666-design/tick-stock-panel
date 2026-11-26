@@ -179,23 +179,21 @@ def enrich_names_from_quotes(
     data_dir: Path,
     quotes_data: list[dict],
 ) -> int:
-    """从 quotes 响应中提取 name，更新 instruments 维表（兜底补充）。
+    """从行情快照补充 instruments 的空名称，返回实际更新数量。
 
-    盘后 quotes.get(universes) 返回的数据中包含 ext.name，
-    用来补充 instruments 中可能缺失的 name。
+    这是多源实时行情启动后的兜底：tdx_local 维表不带名称，若盘前同步把名称
+    覆盖为空，网页会出现大量空白股票名。函数幂等；没有空名称时不写文件。
     """
     if not quotes_data:
         return 0
 
-    # 构建 symbol → name 映射
     name_map: dict[str, str] = {}
     for q in quotes_data:
-        symbol = q.get("symbol", "")
+        symbol = str(q.get("symbol") or "")
         ext = q.get("ext") or {}
         name = ext.get("name") or q.get("name", "")
         if symbol and name:
-            name_map[symbol] = name
-
+            name_map[symbol] = str(name).strip()
     if not name_map:
         return 0
 
@@ -204,20 +202,38 @@ def enrich_names_from_quotes(
         return 0
 
     df = pl.read_parquet(inst_path)
-
-    # 只更新空 name 的行
+    if "symbol" not in df.columns or "name" not in df.columns:
+        return 0
+    missing = df.filter(
+        pl.col("name").is_null() | (pl.col("name").cast(pl.Utf8).str.strip_chars() == "")
+    )["symbol"].cast(pl.Utf8).to_list()
+    if not missing:
+        return 0
+    missing_set = set(missing)
     updates = pl.DataFrame({
-        "symbol": list(name_map.keys()),
-        "_new_name": list(name_map.values()),
+        "symbol": [s for s in name_map if s in missing_set],
+        "_new_name": [name_map[s] for s in name_map if s in missing_set],
     })
-    df = df.join(updates, on="symbol", how="left")
-    df = df.with_columns(
-        pl.when(pl.col("name").is_null() | (pl.col("name") == ""))
+    if updates.is_empty():
+        return 0
+
+    merged = df.join(updates, on="symbol", how="left")
+    merged = merged.with_columns(
+        pl.when(pl.col("name").is_null() | (pl.col("name").cast(pl.Utf8).str.strip_chars() == ""))
         .then(pl.col("_new_name"))
         .otherwise(pl.col("name"))
         .alias("name"),
     ).drop("_new_name")
+    def _named_count(frame: pl.DataFrame) -> int:
+        return frame.filter(
+            pl.col("name").is_not_null()
+            & (pl.col("name").cast(pl.Utf8).str.strip_chars() != "")
+        ).height
 
-    atomic_write_parquet(df, inst_path)
-    logger.info("instruments name enriched from quotes: %d names", len(name_map))
-    return len(name_map)
+    updated = _named_count(merged) - _named_count(df)
+    if updated <= 0:
+        return 0
+
+    atomic_write_parquet(merged, inst_path)
+    logger.info("instruments name enriched from quotes: %d names", updated)
+    return updated

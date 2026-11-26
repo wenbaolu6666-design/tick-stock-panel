@@ -3292,6 +3292,8 @@ export const api = {
   runLimitLadderFix: () =>
     request<{ ok: boolean; count: number; msg: string }>('/api/settings/preferences/limit-ladder-monitor/run', {
       method: 'POST',
+      // 五档盘口按批逐票拉取，强势行情可能超过默认 30s。
+      timeoutMs: 180_000,
     }),
   updateDepthFinalizeTime: (hour: number, minute: number) =>
     request<{ hour: number; minute: number }>('/api/settings/preferences/depth-finalize-time', {

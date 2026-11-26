@@ -63,6 +63,46 @@ def test_minute_df_builds_datetime():
     assert df["datetime"][0].strftime("%H:%M:%S") == "09:31:00"
 
 
+@patch("app.plugins.tdx_quant.provider._call")
+def test_depth5_accepts_unwrapped_gateway_payload(mock_call):
+    mock_call.return_value = {
+        "ErrorId": "0",
+        "Buyp": ["10.0", "9.9", "0", "0", "0"],
+        "Buyv": ["100", "200", "0", "0", "0"],
+        "Sellp": ["10.1", "10.2", "0", "0", "0"],
+        "Sellv": ["0", "50", "0", "0", "0"],
+    }
+    frame = TdxQuantProvider().get_depth5(["600519.SH"])
+    assert frame.height == 1
+    assert frame["bid1_price"][0] == 10.0
+    assert frame["ask1_vol"][0] == 0.0
+
+
+def test_depth_batch_converts_wide_frame_for_depth_service(monkeypatch):
+    frame = pl.DataFrame({
+        "symbol": ["600519.SH"],
+        "timestamp": [1795660000000],
+        "bid1_price": [1297.0], "bid1_vol": [100],
+        "bid2_price": [1296.9], "bid2_vol": [200],
+        "bid3_price": [1296.8], "bid3_vol": [300],
+        "bid4_price": [1296.7], "bid4_vol": [400],
+        "bid5_price": [1296.6], "bid5_vol": [500],
+        "ask1_price": [1297.1], "ask1_vol": [0],
+        "ask2_price": [1297.2], "ask2_vol": [20],
+        "ask3_price": [1297.3], "ask3_vol": [30],
+        "ask4_price": [1297.4], "ask4_vol": [40],
+        "ask5_price": [1297.5], "ask5_vol": [50],
+    })
+    provider = TdxQuantProvider()
+    monkeypatch.setattr(provider, "get_depth5", lambda symbols: frame)
+
+    out = provider.get_depth_batch(["600519.SH"])
+
+    assert out["600519.SH"]["ask_volumes"][0] == 0
+    assert out["600519.SH"]["bid_volumes"] == [100, 200, 300, 400, 500]
+    assert out["600519.SH"]["timestamp"] == 1795660000000
+
+
 # ==================== P0: financial ====================
 
 def _fin_result():

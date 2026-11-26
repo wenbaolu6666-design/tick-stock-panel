@@ -317,6 +317,8 @@ class QuoteService:
         # 异动边缘规则上次评估时间戳 (秒)。异动快照历史部分有 60s 缓存,
         # 但每次构建仍有全市场循环, 轮询线程里限频到 30s 一次。
         self._abnormal_last_eval = 0.0
+        # 实时源快照含名称：最多每分钟检查一次维表空缺，兼顾盘前同步覆盖后的自愈。
+        self._instrument_names_checked_at = 0.0
 
         # 拉取元信息 (给 SSE / status 用)
         self._fetch_time: float = 0.0       # perf_counter (用于计算 quote_age_ms)
@@ -886,6 +888,16 @@ class QuoteService:
                     now_ts = time.perf_counter()
                     provider = custom_sources.get_provider(provider_name)
                     records = provider.get_realtime()
+                    if (records and self._repo is not None
+                            and time.monotonic() - self._instrument_names_checked_at >= 60.0):
+                        self._instrument_names_checked_at = time.monotonic()
+                        try:
+                            from app.services.instrument_sync import enrich_names_from_quotes
+                            updated_names = enrich_names_from_quotes(self._repo.store.data_dir, records)
+                            if updated_names:
+                                self._repo.clear_cache()
+                        except Exception as exc:  # noqa: BLE001 -- 名称补全失败不阻断行情
+                            logger.warning("实时源名称回填失败 (不影响行情): %s", exc)
                     partial_assets = set()
                     fetch_symbols = getattr(provider, "get_realtime_symbols", None)
                     if callable(fetch_symbols):

@@ -682,7 +682,9 @@ class TdxQuantProvider:
         for symbol in target:
             try:
                 result = _call("get_market_snapshot", {"stock_code": symbol}, timeout=10)
-                val = result.get("Value") or {}
+                # TQ 当前网关把快照字段直接放在 result 顶层；兼容旧网关的 Value 包装。
+                value = result.get("Value")
+                val = value if isinstance(value, dict) else result
                 if not val or str(val.get("ErrorId", "0")) != "0":
                     continue
                 last = _f(val.get("Now"))
@@ -767,6 +769,30 @@ class TdxQuantProvider:
 
     # ==================== depth5 ====================
 
+    def get_depth_batch(self, symbols: list[str]) -> dict[str, dict]:
+        """兼容 DepthService 的标准五档字典接口。
+
+        当前 TQ 网关按单票返回快照, get_depth5 已封装为宽表; DepthService
+        统一消费 {symbol: bid/ask 数组}，这里做一次无损转换，避免能力已声明
+        但方法名不匹配导致盘中真假板修正始终返回空。
+        """
+        df = self.get_depth5(symbols)
+        if df.is_empty():
+            return {}
+        out: dict[str, dict] = {}
+        for row in df.iter_rows(named=True):
+            symbol = row.get("symbol")
+            if not symbol:
+                continue
+            out[str(symbol)] = {
+                "bid_prices": [row.get(f"bid{i}_price") for i in range(1, 6)],
+                "bid_volumes": [row.get(f"bid{i}_vol") for i in range(1, 6)],
+                "ask_prices": [row.get(f"ask{i}_price") for i in range(1, 6)],
+                "ask_volumes": [row.get(f"ask{i}_vol") for i in range(1, 6)],
+                "timestamp": row.get("timestamp"),
+            }
+        return out
+
     def get_depth5(self, symbols: list[str]) -> pl.DataFrame:
         """五档盘口快照（get_market_snapshot 的 Buyp/Buyv/Sellp/Sellv）。
 
@@ -777,7 +803,9 @@ class TdxQuantProvider:
         for symbol in symbols:
             try:
                 result = _call("get_market_snapshot", {"stock_code": symbol}, timeout=10)
-                val = result.get("Value") or {}
+                # 当前 TQ 网关把快照字段直接放在 result 顶层；兼容旧网关 Value 包装。
+                value = result.get("Value")
+                val = value if isinstance(value, dict) else result
                 buyp = [_f(x) for x in (val.get("Buyp") or [])]
                 buyv = [_f(x) for x in (val.get("Buyv") or [])]
                 sellp = [_f(x) for x in (val.get("Sellp") or [])]

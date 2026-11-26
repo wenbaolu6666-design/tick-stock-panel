@@ -177,6 +177,16 @@ def test_enrich_names_interrupted_keeps_existing_table(tmp_path: Path, crash) ->
     assert _no_tmp_left(target)
 
 
+def test_enrich_names_accepts_top_level_name_and_is_idempotent(tmp_path: Path) -> None:
+    target = tmp_path / "instruments" / "instruments.parquet"
+    _seed(_instruments(["", "平安银行"]), target)
+    quotes = [{"symbol": "600000.SH", "name": "浦发银行"}]
+
+    assert instrument_sync.enrich_names_from_quotes(tmp_path, quotes) == 1
+    assert pl.read_parquet(target)["name"].to_list() == ["浦发银行", "平安银行"]
+    assert instrument_sync.enrich_names_from_quotes(tmp_path, quotes) == 0
+
+
 # ---------- 财务表 ----------
 
 

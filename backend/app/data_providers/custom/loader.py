@@ -9,6 +9,7 @@ import math
 import re
 import shutil
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from multiprocessing import current_process
 from pathlib import Path
@@ -609,24 +610,44 @@ def _load_builtin_plugins() -> None:
     _PLUGIN_STATUS = {name: info for name, info in _PLUGIN_STATUS.items()
                       if info.get("origin") == "external"}
     pdir = plugins_dir()
+    manifests = []
     for plugin_dir in sorted(pdir.iterdir()) if pdir.exists() else []:
         if plugin_dir.is_dir():
-            load_bundled_manifest(plugin_dir.name)
+            manifest = _read_bundled_manifest(plugin_dir.name)
+            if manifest is not None:
+                manifests.append(manifest)
+    # Availability checks can each perform a bounded network probe. Sequential
+    # checks made startup latency depend on every provider adding up (20-40s);
+    # probe independently, then import/register deterministically in name order.
+    if manifests:
+        with ThreadPoolExecutor(max_workers=min(8, len(manifests))) as pool:
+            checks = {
+                id(manifest): pool.submit(_call_check, manifest.get("check"))
+                for manifest in manifests
+            }
+        for manifest in manifests:
+            _register_one_plugin(manifest, check_result=checks[id(manifest)].result())
     from . import packages
     packages.discover()
 
 
-def load_bundled_manifest(name: str) -> None:
-    """Register one shipped provider without importing or upgrading any external plugins."""
+def _read_bundled_manifest(name: str) -> dict | None:
     if not name or Path(name).name != name or name in (".", ".."):
-        return
+        return None
     path = plugins_dir() / name / "plugin.yaml"
     if path.is_file():
         try:
-            manifest = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-            _register_one_plugin(manifest)
+            return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         except Exception as exc:  # noqa: BLE001 — match normal discovery of optional manifests
             logger.warning("插件 %s 清单解析失败: %s", name, exc)
+    return None
+
+
+def load_bundled_manifest(name: str) -> None:
+    """Register one shipped provider without importing or upgrading any external plugins."""
+    manifest = _read_bundled_manifest(name)
+    if manifest is not None:
+        _register_one_plugin(manifest)
 
 
 def _manifest_status(manifest, available, reason, origin="builtin"):
@@ -659,7 +680,7 @@ def _manifest_status(manifest, available, reason, origin="builtin"):
     }
 
 
-def _register_one_plugin(manifest: dict) -> None:
+def _register_one_plugin(manifest: dict, *, check_result: tuple[bool, str] | None = None) -> None:
     """注册单个插件: 委托自检 → 可用则动态 import entry 注册进 _PROVIDERS。"""
     name = manifest.get("name")
     if not name or not _NAME_RE.match(name):
@@ -671,7 +692,7 @@ def _register_one_plugin(manifest: dict) -> None:
         return
     runtime = str(manifest.get("runtime", "none")).lower()
     # 委托检测: 调用插件自己的 check 函数 (node 型/python 型各自实现)
-    available, reason = _call_check(manifest.get("check"))
+    available, reason = check_result if check_result is not None else _call_check(manifest.get("check"))
     _PLUGIN_STATUS[name] = _manifest_status(manifest, available, reason)
     if not available:
         old = _PROVIDERS.pop(name, None)

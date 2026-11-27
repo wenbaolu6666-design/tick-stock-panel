@@ -92,6 +92,16 @@ for _pdir in sorted(_plugins_root.iterdir()) if _plugins_root.is_dir() else []:
     if not _manifest.is_file():
         continue
     datas += [(str(_manifest), f"app/plugins/{_pdir.name}")]
+    # Node bridges keep runtime assets beside the manifest. PyInstaller only
+    # sees Python hidden imports, so copy the bridge entrypoint and installed
+    # dependency tree explicitly.
+    for _runtime_asset in ("bridge.mjs", "package.json", "package-lock.json"):
+        _asset = _pdir / _runtime_asset
+        if _asset.is_file():
+            datas += [(str(_asset), f"app/plugins/{_pdir.name}")]
+    _node_modules = _pdir / "node_modules"
+    if _node_modules.is_dir():
+        datas += [(str(_node_modules), f"app/plugins/{_pdir.name}/node_modules")]
     hiddenimports += [f"app.plugins.{_pdir.name}.provider"]
     if (_pdir / "client.py").is_file():
         hiddenimports += [f"app.plugins.{_pdir.name}.client"]

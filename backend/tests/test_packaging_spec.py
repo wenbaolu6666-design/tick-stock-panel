@@ -37,6 +37,8 @@ def test_spec_dynamically_declares_active_builtin_plugins():
     assert "for _pdir in sorted(_plugins_root.iterdir())" in SPEC_CODE
     assert 'datas += [(str(_manifest), f"app/plugins/{_pdir.name}")]' in SPEC_CODE
     assert 'hiddenimports += [f"app.plugins.{_pdir.name}.provider"]' in SPEC_CODE
+    assert 'for _runtime_asset in ("bridge.mjs", "package.json", "package-lock.json")' in SPEC_CODE
+    assert '_node_modules = _pdir / "node_modules"' in SPEC_CODE
 
 
 def test_spec_excludes_disabled_tdxquant_plugin():

@@ -141,6 +141,10 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm build
 
+      - name: 安装 stock-sdk Node 桥接依赖
+        working-directory: backend/app/plugins/stocksdk
+        run: npm ci --omit=dev --ignore-scripts
+
       - name: 安装 uv
         uses: astral-sh/setup-uv@v3
         with:

@@ -160,7 +160,13 @@ def test_application_only_recovers_runs_when_it_owns_lock(tmp_path, monkeypatch,
     def stop(**kwargs):
         raise StopAfterManagerInitializationError
 
-    monkeypatch.setattr(main_module, "DataStore", lambda: SimpleNamespace(data_dir=tmp_path))
+    data_store_options: dict = {}
+
+    def data_store(**kwargs):
+        data_store_options.update(kwargs)
+        return SimpleNamespace(data_dir=tmp_path)
+
+    monkeypatch.setattr(main_module, "DataStore", data_store)
     monkeypatch.setattr(
         main_module,
         "KlineRepository",
@@ -182,6 +188,7 @@ def test_application_only_recovers_runs_when_it_owns_lock(tmp_path, monkeypatch,
 
     with pytest.raises(StopAfterManagerInitializationError):
         asyncio.run(exercise())
+    assert data_store_options == {"defer_database": True}
     assert store.get("existing_run")["status"] == ("interrupted" if acquired else "running")
     if not acquired:
         assert manifest.read_bytes() == before

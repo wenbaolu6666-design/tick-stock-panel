@@ -127,7 +127,12 @@ async def _application_lifespan(app: FastAPI):
 
     # 数据层
     with startup_phase(logger, "data store initialization"):
-        store = DataStore()
+        # Registering DuckDB views scans thousands of parquet schemas. Doing that
+        # before lifespan startup makes the desktop health check time out on a
+        # cold OS cache. Keep the connection lazy so the window can open first;
+        # the first database consumer builds it under DataStore's thread-safe
+        # lazy lock without changing query semantics.
+        store = DataStore(defer_database=True)
     with startup_phase(logger, "repository initialization"):
         repo = KlineRepository(store)
     app.state.datastore = store

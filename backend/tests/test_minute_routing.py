@@ -104,6 +104,48 @@ def test_custom_minute_provider_returns_1m_k(monkeypatch):
     assert kwargs.get("asset_type") == "stock"
 
 
+def test_empty_bj_minute_uses_stocksdk_fallback(monkeypatch):
+    """Tencent returns an empty m1 array for .BJ; stock-sdk supplies that subset."""
+    selected = MagicMock()
+    selected.config.datasets = {"minute": object()}
+    selected.iter_minute = None
+    selected.get_minute.return_value = pl.DataFrame()
+    stocksdk = MagicMock()
+    stocksdk.get_minute.return_value = _mock_minute_df("920298.BJ")
+
+    monkeypatch.setattr(
+        kline_sync.preferences,
+        "load",
+        lambda: {"minute_data_provider": "tencent_quote"},
+    )
+    monkeypatch.setattr(
+        kline_sync.preferences,
+        "get_minute_data_provider",
+        lambda: "tencent_quote",
+    )
+    monkeypatch.setattr("app.data_providers.custom.names", lambda: {"tencent_quote", "stocksdk"})
+    monkeypatch.setattr(
+        "app.data_providers.custom.provider_has_dataset",
+        lambda name, dataset: dataset == "minute",
+    )
+    monkeypatch.setattr(
+        "app.data_providers.custom.get_provider",
+        lambda name: selected if name == "tencent_quote" else stocksdk,
+    )
+
+    df, fallback = kline_sync._try_custom_minute(
+        ["920298.BJ"],
+        datetime(2026, 11, 27, 9, 25),
+        datetime(2026, 11, 27, 15, 5),
+        asset_type="stock",
+    )
+
+    assert fallback is False
+    assert df is not None
+    assert df["symbol"].to_list() == ["920298.BJ"]
+    stocksdk.get_minute.assert_called_once()
+
+
 # ---------- 测试 3: 自定义源失败时不跨源回退 ----------
 
 def test_unavailable_selected_provider_does_not_fall_back_to_tickflow(monkeypatch):

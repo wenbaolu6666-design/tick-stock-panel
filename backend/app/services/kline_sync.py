@@ -1008,6 +1008,38 @@ def _try_custom_minute(
             provider_name, e,
         )
         return (pl.DataFrame(), False)
+
+    # Tencent's mkline endpoint returns a valid response with an empty `m1`
+    # array for Beijing Stock Exchange symbols. Fill only the missing .BJ
+    # subset from stock-sdk; other failures remain fail-closed.
+    received = set(df["symbol"].to_list()) if "symbol" in df.columns else set()
+    missing_bj = [s for s in symbols if s.endswith(".BJ") and s not in received]
+    if missing_bj and freq == "1m" and provider_name != "stocksdk":
+        from app.data_providers import custom as custom_sources
+
+        try:
+            if custom_sources.provider_has_dataset("stocksdk", "minute"):
+                bj_df = custom_sources.get_provider("stocksdk").get_minute(
+                    missing_bj,
+                    start_time=start_time,
+                    end_time=end_time,
+                    asset_type=asset_type,
+                    freq="1m",
+                )
+                bj_df = _normalize_minute(bj_df, source="stocksdk").sort(
+                    ["symbol", "datetime"]
+                )
+                if not bj_df.is_empty():
+                    logger.info(
+                        "minute BJ fallback: %s -> stocksdk (%d symbols)",
+                        provider_name,
+                        len(missing_bj),
+                    )
+                    df = pl.concat([df, bj_df], how="diagonal_relaxed").unique(
+                        subset=["symbol", "datetime"], keep="last"
+                    ).sort(["symbol", "datetime"])
+        except Exception as e:  # noqa: BLE001 -- preserve the selected source's empty result
+            logger.warning("minute BJ fallback to stocksdk failed: %s", e)
     return (df, False)
 
 
